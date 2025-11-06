@@ -1,0 +1,2764 @@
+<!DOCTYPE html>
+<html lang="it">
+
+<head>
+
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
+
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Studio Personal Trainer</title>
+
+	<!-- Tailwind + FullCalendar -->
+	<script src="https://cdn.tailwindcss.com"></script>
+	<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+	<style>
+		.fc-event-title {
+			white-space: normal !important;
+			line-height: 1.2em;
+		}
+
+		.modal-backdrop {
+			background: rgba(0, 0, 0, .4);
+		}
+
+
+		.fc-timeGridWeek-view .fc-col-header-cell,
+		.fc-timeGridWeek-view .fc-daygrid-day {
+			min-width: 140px !important;
+			/* Aumenta larghezza colonna */
+		}
+
+		.fc-timeGridWeek-view .fc-scrollgrid {
+			overflow-x: auto;
+			min-width: 1000px;
+			/* Forza scroll orizzontale se troppo stretto */
+		}
+
+		.fc-timeGridWeek-view .fc-scroller-harness {
+			overflow-x: auto;
+		}
+
+
+		body {
+			background: linear-gradient(rgba(250, 247, 242, 0.8), rgba(250, 247, 242, 0.8)),
+				url('https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=1920&q=80');
+			background-size: cover;
+			background-position: center;
+			background-attachment: fixed;
+			font-family: 'Inter', sans-serif;
+			color: #2d2d2d;
+		}
+
+		main,
+		section {
+			background-color: rgba(255, 255, 255, 0.65);
+			backdrop-filter: blur(5px);
+			border-radius: 1rem;
+			box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);
+			padding: 1rem;
+		}
+
+	</style>
+
+
+
+	<!-- Firebase + App Script -->
+	<script type="module">
+		import {
+			initializeApp
+		} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+		import {
+			getFirestore,
+			collection,
+			addDoc,
+			onSnapshot,
+			doc,
+			getDoc,
+			getDocs,
+			query,
+			where,
+			updateDoc,
+			deleteDoc, // 🟢 aggiungi questa riga
+			runTransaction
+		} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+		import {
+			getAuth,
+			createUserWithEmailAndPassword,
+			signInWithEmailAndPassword,
+			onAuthStateChanged,
+			signOut,
+			sendPasswordResetEmail
+		} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+
+
+
+		const firebaseConfig = {
+			apiKey: "AIzaSyAePchF1uQqqJfzrWIHlPe3CI95QgJ09V8",
+			authDomain: "studiopersonal-fc732.firebaseapp.com",
+			projectId: "studiopersonal-fc732",
+			storageBucket: "studiopersonal-fc732.firebasestorage.app",
+			messagingSenderId: "406341481865",
+			appId: "1:406341481865:web:e9d68645e3270b9d379d58"
+		};
+
+		const app = initializeApp(firebaseConfig);
+		const db = getFirestore(app);
+		const auth = getAuth(app);
+
+		// ---------- Utils ----------
+		function showSection(id) {
+			document.querySelectorAll("section").forEach(s => s.classList.add("hidden"));
+			document.getElementById(id)?.classList.remove("hidden");
+		}
+
+		function toISO(v) {
+			if (!v) return null;
+			if (typeof v === "string") return v;
+			if (v.toDate) return v.toDate().toISOString();
+			if (v.seconds) return new Date(v.seconds * 1000).toISOString();
+			return null;
+		}
+		const remainingSeats = (slot) => (slot?.maxSeats ?? 1) - (slot?.bookedCount ?? 0);
+		const withDefaults = (slot) => ({
+			...slot,
+			maxSeats: slot?.maxSeats ?? 1,
+			bookedCount: slot?.bookedCount ?? 0,
+			booked: slot?.booked ?? ((slot?.bookedCount ?? 0) >= (slot?.maxSeats ?? 1))
+		});
+
+		async function populateAdminInstructorSelect() {
+			const instrSel = document.getElementById("modalInstructorSelect");
+			const actSel = document.getElementById("modalActivitySelect");
+
+			if (!instrSel || !actSel) {
+				console.error("⚠️ Select non trovata nel DOM");
+				return;
+			}
+
+			instrSel.innerHTML = `<option value="">Caricamento...</option>`;
+			actSel.innerHTML = `<option value="">Seleziona istruttore prima</option>`;
+
+			try {
+				const trainersSnap = await getDocs(collection(db, "trainers"));
+				const trainerList = trainersSnap.docs.map(doc => ({
+					id: doc.id,
+					...doc.data()
+				}));
+
+				if (trainerList.length === 0) {
+					instrSel.innerHTML = `<option value="">(Nessun istruttore trovato)</option>`;
+					return;
+				}
+
+				instrSel.innerHTML = `<option value="">-- Seleziona istruttore --</option>` +
+					trainerList.map(t => `<option value="${t.name}">${t.name}</option>`).join("");
+
+				// Al cambio istruttore, aggiorna lista attività
+				instrSel.addEventListener("change", (e) => {
+					const selected = trainerList.find(t => t.name === e.target.value);
+					if (selected && selected.activities?.length) {
+						actSel.innerHTML = `<option value="">-- Seleziona attività --</option>` +
+							selected.activities.map(a => `<option value="${a}">${a}</option>`).join("");
+					} else {
+						actSel.innerHTML = `<option value="">(nessuna attività)</option>`;
+					}
+				});
+			} catch (err) {
+				console.error("Errore caricamento istruttori:", err);
+				instrSel.innerHTML = `<option value="">Errore</option>`;
+			}
+		}
+
+
+		// ---------- App ----------
+		window.addEventListener("DOMContentLoaded", () => {
+
+			// --------- Client: login / register / reset ---------
+			const loginForm = document.getElementById("clientLoginForm");
+			const registerForm = document.getElementById("clientRegisterForm");
+			const resetForm = document.getElementById("resetPasswordForm");
+
+			document.getElementById("switchToRegister")?.addEventListener("click", () => {
+				loginForm.classList.add("hidden");
+				registerForm.classList.remove("hidden");
+				resetForm.classList.add("hidden");
+			});
+			document.getElementById("switchToLogin")?.addEventListener("click", () => {
+				registerForm.classList.add("hidden");
+				loginForm.classList.remove("hidden");
+				resetForm.classList.add("hidden");
+			});
+			document.getElementById("forgotPasswordLink")?.addEventListener("click", () => {
+				loginForm.classList.add("hidden");
+				resetForm.classList.remove("hidden");
+			});
+
+			registerForm?.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				const firstName = document.getElementById("regFirstName").value.trim();
+				const lastName = document.getElementById("regLastName").value.trim();
+				const phone = document.getElementById("regPhone").value.trim();
+				const email = document.getElementById("regEmail").value.trim();
+				const pass = document.getElementById("regPass").value.trim();
+
+				if (!firstName || !lastName || !phone || !email || !pass)
+					return alert("⚠️ Compila tutti i campi obbligatori.");
+
+				try {
+					const cred = await createUserWithEmailAndPassword(auth, email, pass);
+					const user = cred.user;
+
+					// Salva i dati utente nel database Firestore
+					await addDoc(collection(db, "clients"), {
+						uid: user.uid,
+						firstName,
+						lastName,
+						phone,
+						email,
+						status: "pending", // 👈 nuovo campo: in attesa
+						createdAt: new Date().toISOString()
+					});
+
+					// facoltativo ma consigliato: non far restare loggato chi è in attesa
+					await signOut(auth);
+
+					alert("✅ Registrazione inviata! Il tuo account è in attesa di approvazione da parte dell'amministratore.");
+					registerForm.reset();
+					showSection("clientLogin");
+
+				} catch (err) {
+					console.error("Errore registrazione:", err);
+					alert("❌ " + err.message);
+				}
+			});
+
+
+			// === ADMIN: CREAZIONE PRENOTAZIONE MANUALE ===
+			let adminBookingCal = null;
+			let selectedSlotForClient = null;
+
+			// Apri modale
+			document.getElementById("adminNewBookingBtn")?.addEventListener("click", async () => {
+				const modal = document.getElementById("adminNewBookingModal");
+				modal.classList.remove("hidden");
+				document.body.classList.add("overflow-hidden");
+
+				await populateClientSelect();
+				await populateInstructors(document.getElementById("adminBookingInstructorSelect"));
+			});
+
+			// Chiudi modale
+			document.getElementById("adminBookingCancel")?.addEventListener("click", () => {
+				document.getElementById("adminNewBookingModal").classList.add("hidden");
+				document.body.classList.remove("overflow-hidden");
+				if (adminBookingCal) adminBookingCal.destroy();
+			});
+
+			// Popola elenco clienti
+			async function populateClientSelect() {
+				const select = document.getElementById("adminBookingClientSelect");
+				select.innerHTML = `<option>Caricamento...</option>`;
+				try {
+					const snap = await getDocs(collection(db, "clients"));
+					const clients = snap.docs.map(d => ({
+						id: d.id,
+						...d.data()
+					}));
+					select.innerHTML = `<option value="">-- Seleziona cliente --</option>` +
+						clients.map(c => `<option value="${c.email}">${c.firstName} ${c.lastName} (${c.email})</option>`).join("");
+				} catch (err) {
+					console.error("Errore caricamento clienti:", err);
+					select.innerHTML = `<option value="">Errore</option>`;
+				}
+			}
+
+			// Mostra slot disponibili
+			document.getElementById("adminBookingLoadSlots")?.addEventListener("click", () => {
+				const date = document.getElementById("adminBookingDate").value;
+				const instructor = document.getElementById("adminBookingInstructorSelect").value;
+				if (!date || !instructor) return alert("Seleziona data e istruttore.");
+
+				const calEl = document.getElementById("adminBookingCalendar");
+				calEl.innerHTML = "";
+				if (adminBookingCal) adminBookingCal.destroy();
+
+				adminBookingCal = new FullCalendar.Calendar(calEl, {
+					initialView: "timeGridDay",
+					initialDate: date,
+					allDaySlot: false,
+					height: "auto",
+					headerToolbar: {
+						left: "prev,next today",
+						center: "title",
+						right: ""
+					},
+					eventClick: (info) => {
+						adminBookingCal.getEvents().forEach(ev => ev.setProp("color", "#16a34a"));
+						info.event.setProp("color", "#2563eb");
+						selectedSlotForClient = info.event.id;
+					}
+				});
+				adminBookingCal.render();
+
+				const q = query(collection(db, "availabilities"), where("deleted", "==", false));
+				onSnapshot(q, (snap) => {
+					adminBookingCal.removeAllEvents();
+					snap.forEach((d) => {
+						const v = withDefaults(d.data());
+						const s = toISO(v.start),
+							e = toISO(v.end);
+						if (!s || !e) return;
+						const sameDay = new Date(s).toISOString().slice(0, 10) === date;
+						const rem = remainingSeats(v);
+						if (sameDay && (instructor === "ALL" || v.instructor === instructor) && rem > 0) {
+							adminBookingCal.addEvent({
+								id: d.id,
+								title: `${v.instructor} – ${v.type || "Allenamento"} (${rem} liberi)`,
+								start: s,
+								end: e,
+								color: "#16a34a"
+							});
+
+						}
+					});
+				});
+			});
+
+			// Conferma prenotazione
+			document.getElementById("adminBookingConfirm")?.addEventListener("click", async () => {
+				const email = document.getElementById("adminBookingClientSelect").value;
+				if (!email || !selectedSlotForClient) return alert("Seleziona cliente e slot.");
+
+				const slotRef = doc(db, "availabilities", selectedSlotForClient);
+				try {
+					await runTransaction(db, async (transaction) => {
+						const sSnap = await transaction.get(slotRef);
+						if (!sSnap.exists()) throw new Error("Slot non trovato.");
+						const slot = withDefaults(sSnap.data());
+						if (slot.bookedCount >= slot.maxSeats) throw new Error("Slot pieno.");
+
+						transaction.update(slotRef, {
+							bookedCount: slot.bookedCount + 1,
+							booked: (slot.bookedCount + 1) >= slot.maxSeats
+						});
+
+						const newApptRef = doc(collection(db, "appointments"));
+						transaction.set(newApptRef, {
+							client: email,
+							email,
+							instructor: slot.instructor,
+							type: slot.type,
+							start: toISO(slot.start),
+							end: toISO(slot.end),
+							slotId: selectedSlotForClient,
+							cancelled: false,
+							createdAt: new Date().toISOString()
+						});
+					});
+					alert("✅ Prenotazione creata con successo!");
+					document.getElementById("adminNewBookingModal").classList.add("hidden");
+					document.body.classList.remove("overflow-hidden");
+				} catch (err) {
+					alert("❌ " + err.message);
+				}
+			});
+
+
+			// === FUNZIONE INVIO WHATSAPP ALLO STUDIO (CallMeBot) ===
+			async function sendWhatsAppToStudio(message) {
+				const studioPhone = "+393332438781"; // es: +393471234567
+				const apiKey = "7348173"; // la chiave ricevuta da CallMeBot
+				const text = encodeURIComponent(message);
+				const phoneClean = studioPhone.replace(/\+/g, "");
+				const url = `https://api.callmebot.com/whatsapp.php?phone=${phoneClean}&text=${text}&apikey=${apiKey}`;
+
+				try {
+					const res = await fetch(url);
+					if (res.ok) {
+						console.log("✅ WhatsApp inviato allo studio");
+					} else {
+						console.warn("⚠️ Errore risposta CallMeBot:", res.status);
+					}
+				} catch (err) {
+					console.error("❌ Errore invio WhatsApp:", err);
+				}
+			}
+
+
+
+
+
+
+			// ---- Gestione Istruttori ----
+			const trainersCollection = collection(db, "trainers");
+
+
+			document.getElementById("openTrainersBtn")?.addEventListener("click", async () => {
+				showSection("adminTrainers");
+				await loadTrainers();
+			});
+
+			document.getElementById("backToAdminPanel")?.addEventListener("click", () => {
+				showSection("adminPanel");
+			});
+
+			document.getElementById("addTrainerBtn")?.addEventListener("click", async () => {
+				const name = document.getElementById("newTrainerName").value.trim();
+				const activitiesText = document.getElementById("newTrainerActivities").value.trim();
+				if (!name || !activitiesText) return alert("Compila tutti i campi.");
+				const activities = activitiesText.split(",").map(a => a.trim()).filter(a => a);
+				try {
+					await addDoc(trainersCollection, {
+						name,
+						activities
+					});
+					document.getElementById("newTrainerName").value = "";
+					document.getElementById("newTrainerActivities").value = "";
+					await loadTrainers();
+					alert("Istruttore aggiunto.");
+				} catch (err) {
+					console.error("Errore aggiunta istruttore:", err);
+					alert("Errore nell'aggiunta.");
+				}
+			});
+
+
+			document.getElementById("openSlotModalBtn")?.addEventListener("click", async () => {
+				await populateAdminInstructorSelect();
+				document.getElementById("createSlotModal").classList.remove("hidden");
+			});
+
+
+			async function loadTrainers() {
+				const tbody = document.getElementById("trainersTableBody");
+				tbody.innerHTML = `<tr><td colspan="3" class="p-3 text-center text-gray-500">Caricamento...</td></tr>`;
+				const snap = await getDocs(trainersCollection);
+				if (snap.empty) {
+					tbody.innerHTML = `<tr><td colspan="3" class="p-3 text-center text-gray-500">Nessun istruttore.</td></tr>`;
+					return;
+				}
+				tbody.innerHTML = "";
+				snap.forEach(doc_ => {
+					const data = doc_.data();
+					const id = doc_.id;
+					tbody.innerHTML += `
+      <tr>
+        <td class="p-2 border">${data.name}</td>
+        <td class="p-2 border">${(data.activities || []).join(", ")}</td>
+        <td class="p-2 border text-center">
+          <button data-id="${id}" class="editTrainerBtn bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600">✏️</button>
+          <button data-id="${id}" class="deleteTrainerBtn bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600">🗑️</button>
+        </td>
+      </tr>`;
+				});
+
+				document.querySelectorAll(".deleteTrainerBtn").forEach(btn => {
+					btn.addEventListener("click", async (e) => {
+						const id = e.target.dataset.id;
+						if (!confirm("Eliminare questo istruttore?")) return;
+						await deleteDoc(doc(db, "trainers", id));
+						await loadTrainers();
+					});
+				});
+				document.querySelectorAll(".editTrainerBtn").forEach(btn => {
+					btn.addEventListener("click", async (e) => {
+						const id = e.target.dataset.id;
+						const docSnap = await getDoc(doc(db, "trainers", id));
+						if (!docSnap.exists()) return alert("Istruttore non trovato.");
+						const d = docSnap.data();
+						const newName = prompt("Nome istruttore:", d.name) || d.name;
+						const newActs = prompt("Attività (separate da virgola):", (d.activities || []).join(", ")) || (d.activities || []).join(", ");
+						const newActivities = newActs.split(",").map(a => a.trim()).filter(a => a);
+						await updateDoc(doc(db, "trainers", id), {
+							name: newName,
+							activities: newActivities
+						});
+						await loadTrainers();
+					});
+				});
+
+
+
+
+			}
+			// ---- Fine Gestione Istruttori ----
+
+
+
+			// ---- Gestione Clienti ----
+			const clientsCollection = collection(db, "clients");
+
+			document.getElementById("openClientsBtn")?.addEventListener("click", async () => {
+				showSection("adminClients");
+				await loadClients();
+			});
+
+			document.getElementById("backToAdminPanelFromClients")?.addEventListener("click", () => {
+				showSection("adminPanel");
+			});
+
+			async function loadClients() {
+				const tbody = document.getElementById("clientsTableBody");
+				tbody.innerHTML = `<tr><td colspan="6" class="p-3 text-center text-gray-500">Caricamento...</td></tr>`;
+
+				try {
+					const snap = await getDocs(clientsCollection);
+					if (snap.empty) {
+						tbody.innerHTML = `<tr><td colspan="6" class="p-3 text-center text-gray-500">Nessun cliente registrato.</td></tr>`;
+						return;
+					}
+
+					tbody.innerHTML = "";
+					snap.forEach(doc_ => {
+						const data = doc_.data();
+						const id = doc_.id;
+						const regDate = data.createdAt ?
+							new Date(data.createdAt).toLocaleDateString("it-IT", {
+								day: "2-digit",
+								month: "2-digit",
+								year: "numeric"
+							}) :
+							"-";
+
+						const status = data.status || "pending";
+						const statusPill =
+							status === "approved" ?
+							`<span class="inline-block px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">Approvato</span>` :
+							`<span class="inline-block px-2 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-800">In attesa</span>`;
+
+						const approveBtn =
+							status === "approved" ?
+							"" :
+							`<button data-id="${id}" class="approveClientBtn bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700">✔️ Approva</button>`;
+
+						tbody.innerHTML += `
+    <tr>
+      <td class="p-2 border">${data.firstName || "-"}</td>
+      <td class="p-2 border">${data.lastName || "-"}</td>
+      <td class="p-2 border">${data.phone || "-"}</td>
+      <td class="p-2 border">${data.email || "-"}</td>
+      <td class="p-2 border text-center">${regDate}</td>
+      <td class="p-2 border text-center">${statusPill}</td>         <!-- 👈 nuova colonna -->
+      <td class="p-2 border text-center space-x-1">
+        <button data-id="${id}" data-name="${data.firstName} ${data.lastName}" class="viewClientBookingsBtn bg-teal-600 text-white px-2 py-1 rounded hover:bg-teal-700">📅</button>
+        ${approveBtn}
+        <button data-id="${id}" class="editClientBtn bg-yellow-500 text-white px-2 py-1 rounded hover:bg-yellow-600">✏️</button>
+        <button data-id="${id}" class="deleteClientBtn bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600">🗑️</button>
+      </td>
+    </tr>
+  `;
+					});
+
+
+					// 🎨 Aggiungi event listener ai bottoni Modifica / Elimina
+					document.querySelectorAll(".deleteClientBtn").forEach(btn => {
+						btn.addEventListener("click", async (e) => {
+							const id = e.target.dataset.id;
+							if (!confirm("Vuoi davvero eliminare questo cliente?")) return;
+							try {
+								await deleteDoc(doc(db, "clients", id));
+								alert("Cliente eliminato con successo.");
+								await loadClients();
+							} catch (err) {
+								console.error("Errore eliminazione cliente:", err);
+								alert("Errore durante l'eliminazione del cliente.");
+							}
+						});
+					});
+
+
+
+
+					document.querySelectorAll(".editClientBtn").forEach(btn => {
+						btn.addEventListener("click", async (e) => {
+							const id = e.target.dataset.id;
+							const docSnap = await getDoc(doc(db, "clients", id));
+							if (!docSnap.exists()) return alert("Cliente non trovato.");
+							const c = docSnap.data();
+
+							// Prompt per aggiornare i dati
+							const newFirst = prompt("Nome:", c.firstName || "") || c.firstName;
+							const newLast = prompt("Cognome:", c.lastName || "") || c.lastName;
+							const newPhone = prompt("Telefono:", c.phone || "") || c.phone;
+
+							try {
+								await updateDoc(doc(db, "clients", id), {
+									firstName: newFirst,
+									lastName: newLast,
+									phone: newPhone,
+									modifiedAt: new Date().toISOString()
+								});
+								alert("Cliente aggiornato correttamente.");
+								await loadClients();
+							} catch (err) {
+								console.error("Errore aggiornamento cliente:", err);
+								alert("Errore durante l'aggiornamento del cliente.");
+							}
+						});
+					});
+
+					// 📅 Visualizza prenotazioni future del cliente
+					document.querySelectorAll(".viewClientBookingsBtn").forEach(btn => {
+						btn.addEventListener("click", async (e) => {
+							const clientId = e.currentTarget.dataset.id; // id del documento in 'clients'
+							const clientName = e.currentTarget.dataset.name || "Cliente";
+
+							const modal = document.getElementById("clientBookingsModal");
+							const tbody = document.getElementById("clientBookingsTableBody");
+							const title = document.getElementById("clientBookingsName");
+
+							title.textContent = `Prenotazioni future di ${clientName}`;
+							tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-gray-500">Caricamento...</td></tr>`;
+							modal.classList.remove("hidden");
+							document.body.classList.add("overflow-hidden");
+
+							try {
+								// 1) Prendo l'email del cliente dalla collezione 'clients'
+								const cSnap = await getDoc(doc(db, "clients", clientId));
+								if (!cSnap.exists()) {
+									tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-red-600">Cliente non trovato.</td></tr>`;
+									return;
+								}
+								const clientEmail = (cSnap.data().email || "").trim();
+								if (!clientEmail) {
+									tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-red-600">Email cliente mancante.</td></tr>`;
+									return;
+								}
+
+								// 2) Query solo per le sue prenotazioni non cancellate.
+								//    (Filtro "future" lato client: niente indici extra richiesti)
+								const qBookings = query(
+									collection(db, "appointments"),
+									where("email", "==", clientEmail),
+									where("cancelled", "==", false)
+								);
+								const bookingsSnap = await getDocs(qBookings);
+
+								const now = new Date();
+								const future = [];
+								bookingsSnap.forEach(d => {
+									const v = d.data();
+
+									// 'start' nel tuo schema è una ISO string; gestiamo anche Timestamp per sicurezza
+									let startISO = v.start;
+									if (v.start?.toDate) startISO = v.start.toDate().toISOString();
+									if (v.start?.seconds) startISO = new Date(v.start.seconds * 1000).toISOString();
+
+									const startDate = new Date(startISO);
+									if (!isNaN(startDate) && startDate > now) {
+										future.push({
+											start: startDate,
+											instructor: v.instructor || "-",
+											type: v.type || "-"
+										});
+									}
+								});
+
+								if (future.length === 0) {
+									tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-gray-500">Nessuna prenotazione futura.</td></tr>`;
+									return;
+								}
+
+								// Ordina per data crescente
+								future.sort((a, b) => a.start - b.start);
+
+								tbody.innerHTML = future.map(f => {
+									const data = f.start.toLocaleDateString("it-IT", {
+										day: "2-digit",
+										month: "2-digit",
+										year: "numeric"
+									});
+									const ora = f.start.toLocaleTimeString("it-IT", {
+										hour: "2-digit",
+										minute: "2-digit"
+									});
+									return `
+          <tr>
+            <td class="p-2 border">${data}</td>
+            <td class="p-2 border">${ora}</td>
+            <td class="p-2 border">${f.instructor}</td>
+            <td class="p-2 border">${f.type}</td>
+          </tr>
+        `;
+								}).join("");
+
+							} catch (err) {
+								console.error("Errore caricamento prenotazioni cliente:", err);
+								tbody.innerHTML = `<tr><td colspan="4" class="p-3 text-center text-red-600">Errore durante il caricamento.</td></tr>`;
+							}
+						});
+					});
+
+					// Chiudi il modale
+					document.getElementById("closeClientBookings")?.addEventListener("click", () => {
+						document.getElementById("clientBookingsModal").classList.add("hidden");
+						document.body.classList.remove("overflow-hidden");
+					});
+
+
+
+
+				} catch (err) {
+					console.error("Errore caricamento clienti:", err);
+					tbody.innerHTML = `<tr><td colspan="6" class="p-3 text-center text-red-600">Errore nel caricamento clienti.</td></tr>`;
+				}
+			}
+
+
+			// Event delegation: attaccalo una volta, fuori da loadClients()
+			document.getElementById("clientsTableBody").addEventListener("click", async (e) => {
+				const approveBtn = e.target.closest(".approveClientBtn");
+				if (!approveBtn) return;
+
+				const id = approveBtn.dataset.id;
+				if (!id) return;
+				if (!confirm("Approvare questo cliente?")) return;
+
+				try {
+					approveBtn.disabled = true;
+					await updateDoc(doc(db, "clients", id), {
+						status: "approved",
+						approvedAt: new Date().toISOString()
+					});
+					alert("✅ Cliente approvato.");
+					await loadClients();
+				} catch (err) {
+					console.error(err);
+					alert("Errore durante l'approvazione: " + err.message);
+				} finally {
+					approveBtn.disabled = false;
+				}
+			});
+
+
+
+
+			// ---- Fine Gestione Clienti ----
+
+			loginForm?.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				try {
+					const email = document.getElementById("loginEmail").value.trim();
+					const pass = document.getElementById("loginPass").value.trim();
+					await signInWithEmailAndPassword(auth, email, pass);
+				} catch (err) {
+					alert(err.message);
+				}
+			});
+
+			resetForm?.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				try {
+					const email = document.getElementById("resetEmail").value.trim();
+					await sendPasswordResetEmail(auth, email);
+					alert("Email di reset inviata.");
+					resetForm.reset();
+					showSection("clientLogin");
+				} catch (err) {
+					alert(err.message);
+				}
+
+			});
+
+
+
+
+
+
+
+
+
+			document.getElementById("openReport")?.addEventListener("click", async () => {
+				showSection("adminReport");
+				await populateReportInstructors();
+				setDefaultReportDates();
+				loadReport();
+			});
+
+			document.getElementById("backToCalendar")?.addEventListener("click", () => {
+				showSection("adminPanel");
+			});
+
+			document.getElementById("loadReportBtn")?.addEventListener("click", () => {
+				loadReport();
+			});
+
+			async function populateReportInstructors() {
+				const select = document.getElementById("reportInstructorSelect");
+				const snap = await getDocs(collection(db, "availabilities"));
+				const set = new Set();
+				snap.forEach(doc => {
+					const v = doc.data();
+					if (v && v.instructor) set.add(v.instructor);
+				});
+				const instructors = Array.from(set).sort();
+				select.innerHTML = `<option value="ALL">Tutti</option>` +
+					instructors.map(i => `<option value="${i}">${i}</option>`).join("");
+			}
+
+			function setDefaultReportDates() {
+				const startEl = document.getElementById("reportStartDate");
+				const endEl = document.getElementById("reportEndDate");
+				const today = new Date();
+				const start = new Date(today);
+				start.setDate(today.getDate() - today.getDay() + 1); // Monday
+				const end = new Date(start);
+				end.setDate(start.getDate() + 6); // Sunday
+
+				startEl.value = start.toISOString().slice(0, 10);
+				endEl.value = end.toISOString().slice(0, 10);
+			}
+
+			async function loadReport() {
+				const tbody = document.getElementById("reportTableBody");
+				tbody.innerHTML = `<tr><td colspan="5" class="p-3 text-center text-gray-500">Caricamento...</td></tr>`;
+
+				const selectedInstructor = document.getElementById("reportInstructorSelect").value;
+				const startDate = document.getElementById("reportStartDate").value;
+				const endDate = document.getElementById("reportEndDate").value;
+
+				if (!startDate || !endDate) {
+					alert("Seleziona data inizio e fine.");
+					return;
+				}
+
+				const from = new Date(startDate + "T00:00:00");
+				const to = new Date(endDate + "T23:59:59");
+
+				try {
+					const q = query(collection(db, "availabilities"), where("deleted", "==", false));
+					const snap = await getDocs(q);
+
+					const filtered = [];
+
+					snap.forEach(d => {
+						const v = withDefaults(d.data());
+						const start = new Date(toISO(v.start));
+						if (isNaN(start)) return;
+						if (start < from || start > to) return;
+						if (selectedInstructor !== "ALL" && v.instructor !== selectedInstructor) return;
+
+						filtered.push({
+							...v,
+							startDate: start,
+							giorno: start.toLocaleDateString("it-IT", {
+								weekday: 'long',
+								day: '2-digit',
+								month: '2-digit'
+							}),
+							ora: start.toLocaleTimeString("it-IT", {
+								hour: '2-digit',
+								minute: '2-digit'
+							}),
+						});
+					});
+
+					filtered.sort((a, b) => a.startDate - b.startDate);
+
+					const rows = filtered.map(v => `
+      <tr>
+        <td class="p-2 border">${v.giorno}</td>
+        <td class="p-2 border">${v.ora}</td>
+        <td class="p-2 border">${v.instructor}</td>
+        <td class="p-2 border">${v.type || "-"}</td>
+        <td class="p-2 border text-center">${v.bookedCount}/${v.maxSeats}</td>
+      </tr>
+    `);
+
+					tbody.innerHTML = rows.length > 0 ?
+						rows.join("") :
+						`<tr><td colspan="5" class="p-3 text-center text-gray-500">Nessun dato trovato.</td></tr>`;
+
+				} catch (err) {
+					console.error("Errore nel caricamento report:", err);
+					tbody.innerHTML = `<tr><td colspan="5" class="p-3 text-center text-red-600">Errore nel caricamento.</td></tr>`;
+				}
+			}
+
+
+
+			// === EXPORT REPORT PDF ===
+			const exportReportBtn = document.getElementById("exportReportPDF");
+			if (exportReportBtn) {
+				exportReportBtn.addEventListener("click", () => {
+					try {
+						const {
+							jsPDF
+						} = window.jspdf;
+						const doc = new jsPDF();
+
+						// Legge i filtri attivi
+						const instructor = document.getElementById("reportInstructorSelect")?.value || "ALL";
+						const startDate = document.getElementById("reportStartDate")?.value || "-";
+						const endDate = document.getElementById("reportEndDate")?.value || "-";
+
+						// Intestazione
+						doc.setFontSize(16);
+						doc.text("Report Attività Studio Personal Trainer", 14, 15);
+						doc.setFontSize(10);
+						doc.text(
+							`Periodo: ${startDate} → ${endDate} | Istruttore: ${
+          instructor === "ALL" ? "Tutti" : instructor
+        }`,
+							14,
+							22
+						);
+
+						// Tabella dal DOM
+						const rows = Array.from(document.querySelectorAll("#reportTableBody tr")).map(tr =>
+							Array.from(tr.querySelectorAll("td")).map(td => td.innerText.trim())
+						);
+
+						if (!rows.length || rows[0][0].includes("Nessun")) {
+							alert("⚠️ Nessun dato da esportare.");
+							return;
+						}
+
+						const headers = [
+							["Data", "Ora", "Istruttore", "Disciplina", "Posti"]
+						];
+						doc.autoTable({
+							startY: 30,
+							head: headers,
+							body: rows,
+							styles: {
+								fontSize: 9
+							},
+							headStyles: {
+								fillColor: [22, 163, 74]
+							},
+						});
+
+						const today = new Date().toISOString().slice(0, 10);
+						doc.save(`report_${today}.pdf`);
+					} catch (err) {
+						console.error("Errore esportazione PDF:", err);
+						alert("Errore durante la creazione del PDF.");
+					}
+				});
+			}
+
+
+
+
+
+			// --------- Client: dashboard list / cancel / edit ---------
+			function loadClientAppointments(email) {
+				const body = document.getElementById("apptTableBody");
+
+
+
+				const now = new Date().toISOString();
+				const qAppt = query(
+					collection(db, "appointments"),
+					where("email", "==", email),
+					where("cancelled", "==", false)
+				);
+
+				onSnapshot(qAppt, (snap) => {
+					const future = [];
+					const past = [];
+
+					snap.forEach(d => {
+						const v = d.data();
+						const startISO = toISO(v.start);
+						if (!startISO) return;
+						const isPast = new Date(startISO) < new Date();
+						const entry = {
+							id: d.id,
+							instructor: v.instructor,
+							type: v.type || "-",
+							date: new Date(startISO).toLocaleString(),
+							slotId: v.slotId
+						};
+						if (isPast) past.push(entry);
+						else future.push(entry);
+					});
+
+					const body = document.getElementById("apptTableBody");
+					body.innerHTML = future.length ?
+						future.map(a => `
+      <tr>
+        <td class="p-2 border">${a.instructor}</td>
+        <td class="p-2 border">${a.type}</td>
+        <td class="p-2 border">${a.date}</td>
+        <td class="p-2 border text-center space-x-1">
+          <button data-id="${a.id}" data-slot="${a.slotId}" class="edit bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600">✏️</button>
+          <button data-id="${a.id}" data-slot="${a.slotId}" class="cancel bg-red-500 text-white px-2 py-1 rounded hover:bg-red-600">🗑️</button>
+        </td>
+      </tr>
+    `).join("") :
+						`<tr><td colspan="4" class="p-3 text-center text-gray-500">Nessuna prenotazione futura.</td></tr>`;
+
+					// Storico
+					const history = document.getElementById("apptHistoryBody");
+					history.innerHTML = past.length ?
+						past.map(a => `
+      <tr>
+        <td class="p-2 border">${a.instructor}</td>
+        <td class="p-2 border">${a.type}</td>
+        <td class="p-2 border">${a.date}</td>
+      </tr>
+    `).join("") :
+						`<tr><td colspan="3" class="p-3 text-center text-gray-400">Nessuna prenotazione passata.</td></tr>`;
+				});
+
+			}
+
+			// Event delegation per CANCEL/EDIT
+			document.getElementById("apptTableBody")?.addEventListener("click", async (e) => {
+				const cancelBtn = e.target.closest(".cancel");
+				if (cancelBtn) {
+					if (confirm("Vuoi cancellare questa prenotazione?")) {
+						const apptId = cancelBtn.dataset.id;
+						const slotId = cancelBtn.dataset.slot;
+						await runTransaction(db, async (transaction) => {
+							const apptRef = doc(db, "appointments", apptId);
+							const apptSnap = await transaction.get(apptRef);
+							if (!apptSnap.exists()) throw new Error("Prenotazione non trovata.");
+							const slotRef = doc(db, "availabilities", slotId);
+							const slotSnap = await transaction.get(slotRef);
+							if (!slotSnap.exists()) throw new Error("Slot non trovato.");
+							const slot = withDefaults(slotSnap.data());
+							const newCount = Math.max(0, (slot.bookedCount || 0) - 1);
+							transaction.update(apptRef, {
+								cancelled: true
+							});
+							transaction.update(slotRef, {
+								bookedCount: newCount,
+								booked: (newCount) >= slot.maxSeats
+							});
+						});
+						alert("Prenotazione cancellata.");
+					}
+					return;
+				}
+				const editBtn = e.target.closest(".edit");
+				if (editBtn) {
+					openEditModal(editBtn.dataset.id, editBtn.dataset.slot);
+					return;
+				}
+			});
+
+			// --------- Client: nuova prenotazione ----------
+			let selectedSlot = null;
+			let selectedType = null;
+			let selectedInstructor = null;
+
+
+			async function populateInstructors(selectEl) {
+				if (!selectEl) return;
+				selectEl.innerHTML = `<option value="">Caricamento...</option>`;
+
+				try {
+					const trainersSnap = await getDocs(collection(db, "trainers"));
+					const trainerList = trainersSnap.docs.map(doc => doc.data().name);
+
+					if (trainerList.length === 0) {
+						selectEl.innerHTML = `<option value="ALL">Nessun istruttore disponibile</option>`;
+					} else {
+						selectEl.innerHTML =
+							`<option value="ALL">Tutti gli istruttori</option>` +
+							trainerList.map(name => `<option value="${name}">${name}</option>`).join("");
+					}
+				} catch (err) {
+					console.error("Errore caricamento istruttori:", err);
+					selectEl.innerHTML = `<option value="ALL">(Errore caricamento)</option>`;
+				}
+			}
+
+
+
+
+
+
+
+
+			document.getElementById("newBookingBtn")?.addEventListener("click", async () => {
+				await populateInstructors(document.getElementById("instructorSelect"));
+				document.getElementById("instructorSelect").value = "ALL";
+				document.getElementById("trainingType").value = "ALL";
+				showSection("clientBooking");
+			});
+
+			document.getElementById("backToDashboard")?.addEventListener("click", () =>
+				showSection("clientDashboard")
+			);
+
+			document.getElementById("loadSlotsBtn")?.addEventListener("click", () => {
+				const date = document.getElementById("bookingDate").value;
+				const type = document.getElementById("trainingType").value;
+				const inst = document.getElementById("instructorSelect").value;
+
+				if (!date) return alert("Seleziona una data.");
+				selectedType = type;
+				selectedInstructor = inst;
+				initClientCalendar(date, inst);
+			});
+
+			function initClientCalendar(date, instructor) {
+				const calEl = document.getElementById("clientCalendar");
+				calEl.innerHTML = "";
+				const cal = new FullCalendar.Calendar(calEl, {
+					initialView: "timeGridDay",
+					initialDate: date,
+					allDaySlot: false,
+					height: "auto",
+					headerToolbar: {
+						left: "prev,next today",
+						center: "title",
+						right: "timeGridDay"
+					},
+
+
+					eventClick: (info) => {
+						selectedSlot = info.event.id;
+						fetchSlotTypeAndShowConfirm(info);
+					}
+
+
+
+
+
+
+				});
+
+
+
+				async function fetchSlotTypeAndShowConfirm(info) {
+					let slotType = "Allenamento";
+					try {
+						const slotRef = doc(db, "availabilities", selectedSlot);
+						const snap = await getDoc(slotRef);
+						if (snap.exists()) {
+							const slotData = snap.data();
+							slotType = slotData.type || "Allenamento";
+						}
+					} catch (err) {
+						console.error("Errore nel recupero tipo slot:", err);
+					}
+
+					document.getElementById("confirmText").textContent =
+						`Confermi ${slotType} con ${info.event.title} il ${info.event.start.toLocaleString()}?`;
+					document.getElementById("confirmModal").classList.remove("hidden");
+				}
+
+
+
+				cal.render();
+
+				const q = query(collection(db, "availabilities"), where("deleted", "==", false));
+				onSnapshot(q, (snap) => {
+					cal.removeAllEvents();
+					snap.forEach((d) => {
+						const v = withDefaults(d.data());
+						const s = toISO(v.start),
+							e = toISO(v.end);
+						if (!s || !e) return;
+
+						const sameDay = new Date(s).toISOString().slice(0, 10) === date;
+						const rem = remainingSeats(v);
+
+						const instOK = instructor === "ALL" || v.instructor === instructor;
+						const typeOK = selectedType === "ALL" || (v.type || "") === selectedType;
+
+						if (sameDay && instOK && typeOK) {
+							cal.addEvent({
+								id: d.id,
+								title: `${v.instructor} – ${v.type || "Allenamento"} (${rem} posti liberi)`,
+								start: s,
+								end: e,
+								color: rem > 0 ? "#16a34a" : "#9ca3af"
+							});
+						}
+					});
+				});
+			}
+
+			// Conferma prenotazione (posti multipli, transazione)
+			document.getElementById("confirmBooking")?.addEventListener("click", async () => {
+				const user = auth.currentUser;
+				if (!user || !selectedSlot) return alert("Errore utente o slot.");
+				const slotRef = doc(db, "availabilities", selectedSlot);
+
+				try {
+					await runTransaction(db, async (transaction) => {
+						const sSnap = await transaction.get(slotRef);
+						if (!sSnap.exists()) throw new Error("Slot non trovato.");
+						const slot = withDefaults(sSnap.data());
+						const max = slot.maxSeats;
+						const booked = slot.bookedCount;
+						if (booked >= max) throw new Error("Slot pieno.");
+
+						transaction.update(slotRef, {
+							bookedCount: booked + 1,
+							booked: (booked + 1) >= max
+						});
+
+						const newApptRef = doc(collection(db, "appointments"));
+						transaction.set(newApptRef, {
+							client: sessionStorage.getItem("clientName") || user.email,
+							email: user.email,
+							instructor: slot.instructor,
+							type: slot.type || "Allenamento", // 👈 PRENDIAMO IL TYPE DALLO SLOT!
+							start: toISO(slot.start),
+							end: toISO(slot.end),
+							slotId: selectedSlot,
+							cancelled: false,
+							createdAt: new Date().toISOString()
+						});
+					});
+					alert("Prenotazione completata!");
+					document.getElementById("confirmModal").classList.add("hidden");
+					showSection("clientDashboard");
+
+					// === INVIO NOTIFICA ALLO STUDIO VIA WHATSAPP ===
+					try {
+						const slotSnap = await getDoc(slotRef);
+						const slot = slotSnap.data();
+						const date = new Date(toISO(slot.start)).toLocaleDateString("it-IT", {
+							day: "2-digit",
+							month: "2-digit",
+							year: "numeric"
+						});
+						const time = new Date(toISO(slot.start)).toLocaleTimeString("it-IT", {
+							hour: "2-digit",
+							minute: "2-digit"
+						});
+
+						const msg = `📅 Nuova prenotazione ricevuta!
+👤 Cliente: ${sessionStorage.getItem("clientName") || user.email}
+📧 Email: ${user.email}
+🏋️‍♂️ Attività: ${slot.type || "Allenamento"}
+👨‍🏫 Istruttore: ${slot.instructor}
+🕒 Data: ${date} alle ${time}`;
+
+						sendWhatsAppToStudio(msg);
+					} catch (err) {
+						console.error("Errore invio WhatsApp studio:", err);
+					}
+
+				} catch (err) {
+					alert(err.message);
+				}
+			});
+
+
+
+			document.getElementById("cancelBooking")?.addEventListener("click", () => {
+				document.getElementById("confirmModal").classList.add("hidden");
+			});
+
+			function snapTo(ref, snap) {
+				return {
+					...snap.data(),
+					_id: ref.id
+				};
+			}
+
+			// --------- Client: MODIFICA appuntamento ----------
+			let editApptId = null,
+				oldSlotId = null,
+				editCalendar = null,
+				selectedNewSlot = null,
+				chosenInstructor = null;
+			async function openEditModal(apptId, prevSlotId) {
+				editApptId = apptId;
+				oldSlotId = prevSlotId;
+				const apptRef = doc(db, "appointments", apptId);
+				const snap = await getDoc(apptRef);
+				if (!snap.exists()) return alert("Appuntamento non trovato.");
+				const v = snap.data();
+
+				await populateInstructors(document.getElementById("editInstructor"));
+				document.getElementById("editInstructor").value = v.instructor || "";
+				document.getElementById("editType").value = "ALL";
+				document.getElementById("editDate").value = toISO(v.start).slice(0, 10);
+				document.getElementById("editInfo").textContent =
+					`Modifica appuntamento con ${v.instructor} (${v.type}) del ${new Date(toISO(v.start)).toLocaleString()}.`;
+
+				document.getElementById("editSelection").textContent = "Nessuno slot selezionato.";
+				document.getElementById("editModal").classList.remove("hidden");
+				document.body.classList.add("overflow-hidden");
+				selectedNewSlot = null;
+			}
+
+			document.getElementById("loadEditSlotsBtn")?.addEventListener("click", () => {
+				const date = document.getElementById("editDate").value;
+				chosenInstructor = document.getElementById("editInstructor").value;
+				const selectedEditType = document.getElementById("editType").value;
+
+				if (!date || !chosenInstructor || !selectedEditType) return alert("Compila tutti i filtri.");
+
+				const calEl = document.getElementById("editCalendar");
+				calEl.innerHTML = "";
+				const confirmBtn = document.getElementById("confirmEdit");
+				confirmBtn.disabled = true;
+				confirmBtn.classList.add("opacity-50", "cursor-not-allowed");
+
+				let prev = null;
+				editCalendar = new FullCalendar.Calendar(calEl, {
+					initialView: "timeGridDay",
+					initialDate: date,
+					allDaySlot: false,
+					height: "auto",
+					headerToolbar: {
+						left: "prev,next today",
+						center: "title",
+						right: "timeGridDay"
+					},
+					eventClick: (info) => {
+						if (prev) prev.setProp("color", "#16a34a");
+						info.event.setProp("color", "#2563eb");
+						prev = info.event;
+						selectedNewSlot = info.event.id;
+						confirmBtn.disabled = false;
+						confirmBtn.classList.remove("opacity-50", "cursor-not-allowed");
+						document.getElementById("editSelection").textContent =
+							`Selezionato: ${info.event.title} — ${info.event.start.toLocaleString()}`;
+					}
+				});
+				editCalendar.render();
+
+				const q = query(collection(db, "availabilities"), where("deleted", "==", false));
+				onSnapshot(q, (snap) => {
+					editCalendar.removeAllEvents();
+					snap.forEach((d) => {
+						const v = withDefaults(d.data());
+						const s = toISO(v.start),
+							e = toISO(v.end);
+						if (!s || !e) return;
+
+						const sameDay = new Date(s).toISOString().slice(0, 10) === date;
+						const rem = remainingSeats(v);
+
+						const instOK = chosenInstructor === "ALL" || v.instructor === chosenInstructor;
+						const typeOK = selectedEditType === "ALL" || (v.type || "") === selectedEditType;
+
+						if (sameDay && instOK && typeOK && rem > 0) {
+							editCalendar.addEvent({
+								id: d.id,
+								title: `${v.instructor} – ${v.type || "Allenamento"} (${rem} liberi)`,
+								start: s,
+								end: e,
+								color: "#16a34a"
+							});
+						}
+					});
+				});
+			});
+
+
+			document.getElementById("confirmEdit")?.addEventListener("click", async () => {
+				if (!editApptId || !selectedNewSlot) return alert("Seleziona uno slot.");
+				try {
+					await runTransaction(db, async (transaction) => {
+						const apptRef = doc(db, "appointments", editApptId);
+						const apptSnap = await transaction.get(apptRef);
+						if (!apptSnap.exists()) throw new Error("Prenotazione non trovata.");
+						const appt = apptSnap.data();
+
+						const oldRef = doc(db, "availabilities", oldSlotId);
+						const newRef = doc(db, "availabilities", selectedNewSlot);
+						const oldSnap = await transaction.get(oldRef);
+						const newSnap = await transaction.get(newRef);
+						if (!newSnap.exists()) throw new Error("Nuovo slot inesistente.");
+						if (!oldSnap.exists()) throw new Error("Vecchio slot inesistente.");
+
+						const oldSlot = withDefaults(oldSnap.data());
+						const newSlot = withDefaults(newSnap.data());
+
+						if (remainingSeats(newSlot) <= 0) throw new Error("Il nuovo slot è pieno.");
+
+						// decremento vecchio, incremento nuovo
+						const oldNewCount = Math.max(0, (oldSlot.bookedCount || 0) - 1);
+						const newNewCount = (newSlot.bookedCount || 0) + 1;
+
+						transaction.update(oldRef, {
+							bookedCount: oldNewCount,
+							booked: oldNewCount >= oldSlot.maxSeats
+						});
+						transaction.update(newRef, {
+							bookedCount: newNewCount,
+							booked: newNewCount >= newSlot.maxSeats
+						});
+						transaction.update(apptRef, {
+							instructor: newSlot.instructor,
+							start: toISO(newSlot.start),
+							end: toISO(newSlot.end),
+							slotId: selectedNewSlot,
+							type: newSlot.type || "Allenamento", // 🟢 AGGIUNGE IL NUOVO TIPO DI LEZIONE
+							modifiedAt: new Date().toISOString()
+						});
+
+					});
+					alert("Prenotazione aggiornata!");
+					document.getElementById("editModal").classList.add("hidden");
+					document.body.classList.remove("overflow-hidden");
+				} catch (err) {
+					alert(err.message);
+				}
+			});
+
+			document.getElementById("cancelEdit")?.addEventListener("click", () => {
+				document.getElementById("editModal").classList.add("hidden");
+				document.body.classList.remove("overflow-hidden");
+			});
+
+			// --------- Admin: login/logout ----------
+			document.getElementById("adminLoginForm")?.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				try {
+					const email = document.getElementById("adminEmail").value.trim();
+					const pass = document.getElementById("adminPassword").value.trim();
+					const cred = await signInWithEmailAndPassword(auth, email, pass);
+					const user = cred.user;
+
+					// 🔍 Controlla se l'utente è registrato come admin
+					const adminDoc = await getDoc(doc(db, "admins", email));
+					if (!adminDoc.exists()) {
+						await signOut(auth); // blocca subito
+						alert("❌ Accesso negato: non sei un amministratore.");
+						return;
+					}
+
+					// ✅ Accesso consentito
+					location.hash = "#admin";
+				} catch (err) {
+					console.error("Errore login admin:", err);
+					alert("Errore login admin: " + err.message);
+				}
+			});
+
+
+			document.getElementById("logoutBtn")?.addEventListener("click", async () => {
+				await signOut(auth);
+				location.hash = "";
+				showSection("clientLogin");
+			});
+			document.getElementById("clientLogout")?.addEventListener("click", async () => {
+				await signOut(auth);
+				location.hash = "";
+				showSection("clientLogin");
+			});
+
+			// --------- Admin: calendario unico ----------
+			let adminUnsub = null,
+				adminCal = null;
+			async function initAdminCalendars() {
+				const calEl = document.getElementById("calendarStudio");
+				if (!calEl) return;
+				calEl.innerHTML = "";
+				if (adminCal) {
+					adminCal.destroy();
+					adminCal = null;
+				}
+
+
+
+
+
+				adminCal = new FullCalendar.Calendar(calEl, {
+					initialView: "timeGridWeek",
+					selectable: true,
+					editable: true,
+					height: "auto",
+					slotMinTime: "06:00:00",
+					slotMaxTime: "22:00:00",
+					slotDuration: "00:15:00",
+					slotLabelInterval: "01:00",
+					slotMinHeight: 40,
+					nowIndicator: true,
+					expandRows: true,
+					dayMaxEventRows: 6, // aumenta il numero di eventi visibili sovrapposti
+					contentHeight: "auto",
+					stickyHeaderDates: true,
+					dayHeaderFormat: {
+						weekday: 'short',
+						day: 'numeric'
+					}, // "Lun 30"
+					headerToolbar: {
+						left: "prev,next today",
+						center: "title",
+						right: "timeGridWeek,timeGridDay"
+					},
+
+
+
+
+
+
+					eventAllow: (dropInfo, draggedEvent) => {
+						// Permetti spostamento solo se slot NON prenotato
+						const event = draggedEvent.extendedProps;
+						return !(event.bookedCount > 0);
+					},
+
+					eventDrop: async (info) => {
+						const v = info.event.extendedProps;
+						// Non permettere spostamento se ha prenotazioni attive
+						if (v.bookedCount > 0) {
+							alert("❌ Non puoi spostare uno slot con prenotazioni attive!");
+							info.revert();
+							return;
+						}
+
+						// Aggiorna su Firestore i nuovi orari
+						try {
+							const slotRef = doc(db, "availabilities", info.event.id);
+							await updateDoc(slotRef, {
+								start: info.event.start.toISOString(),
+								end: info.event.end ? info.event.end.toISOString() : new Date(info.event.start.getTime() + 60 * 60000).toISOString(), // fallback 60'
+								modifiedAt: new Date().toISOString()
+							});
+							// opzionale: feedback
+							// console.log("Slot aggiornato:", info.event.id);
+						} catch (err) {
+							console.error("Errore update slot dopo drop:", err);
+							alert("Errore durante l'aggiornamento dello slot. Annullato.");
+							info.revert();
+						}
+					},
+
+
+					eventResize: async (info) => {
+						const v = info.event.extendedProps;
+						if (v.bookedCount > 0) {
+							alert("❌ Non puoi cambiare durata di uno slot con prenotazioni attive!");
+							info.revert();
+							return;
+						}
+
+						try {
+							const slotRef = doc(db, "availabilities", info.event.id);
+							await updateDoc(slotRef, {
+								start: info.event.start.toISOString(),
+								end: info.event.end.toISOString(),
+								modifiedAt: new Date().toISOString()
+							});
+						} catch (err) {
+							console.error("Errore update slot dopo resize:", err);
+							alert("Errore durante il salvataggio della nuova durata. Annullato.");
+							info.revert();
+						}
+					},
+
+
+
+
+
+
+
+
+
+					select: async (info) => {
+						// Salva in dataset per usarlo al click su "Crea slot"
+						const modalDiv = document.getElementById("slotCreationModal");
+						const instrSel = document.getElementById("adminModalInstructorSelect");
+						const actSel = document.getElementById("adminModalActivitySelect");
+						const durInput = document.getElementById("modalDuration");
+						const seatsInp = document.getElementById("modalMaxSeats");
+
+						if (!modalDiv || !instrSel || !actSel || !durInput || !seatsInp) {
+							console.error("❗ Elementi del modale non trovati");
+							return;
+						}
+
+						// Memorizzo la selezione del calendario nel modale
+						modalDiv.dataset.startIso = info.start.toISOString();
+						modalDiv.dataset.endIso = info.end?.toISOString() || "";
+						// Precompila durata con la differenza selezionata (fallback 60)
+						const defDurationMin = Math.max(1, Math.round(((info.end - info.start) || 3600000) / 60000));
+						durInput.value = defDurationMin;
+						// Precompila posti
+						if (!seatsInp.value) seatsInp.value = 1;
+
+						// Carica istruttori e prepara attività onChange
+						instrSel.innerHTML = `<option value="">Caricamento...</option>`;
+						actSel.innerHTML = `<option value="">Seleziona istruttore prima</option>`;
+
+						let trainerList = [];
+						try {
+							const snap = await getDocs(collection(db, "trainers"));
+							trainerList = snap.docs.map(d => ({
+								id: d.id,
+								...d.data()
+							}));
+							instrSel.innerHTML =
+								(trainerList.length === 0) ?
+								`<option value="">(nessun istruttore)</option>` :
+								`<option value="">-- Seleziona istruttore --</option>` +
+								trainerList.map(t => `<option value="${t.name}">${t.name}</option>`).join("");
+						} catch (err) {
+							console.error("Errore caricamento istruttori:", err);
+							instrSel.innerHTML = `<option value="">Errore caricamento</option>`;
+						}
+
+						instrSel.onchange = (e) => {
+							const selName = e.target.value;
+							const trainer = trainerList.find(t => t.name === selName);
+							if (trainer && Array.isArray(trainer.activities) && trainer.activities.length) {
+								actSel.innerHTML = `<option value="">-- Seleziona attività --</option>` +
+									trainer.activities.map(a => `<option value="${a}">${a}</option>`).join("");
+							} else {
+								actSel.innerHTML = `<option value="">(nessuna attività disponibile)</option>`;
+							}
+						};
+
+						// Apri il modale
+						modalDiv.classList.remove("hidden");
+						document.body.classList.add("overflow-hidden");
+
+						// 🔒 Evita doppie bind del click su "Crea slot"
+						if (modalDiv._createAbortCtrl) {
+							modalDiv._createAbortCtrl.abort();
+						}
+						const abortCtrl = new AbortController();
+						modalDiv._createAbortCtrl = abortCtrl;
+
+						const createBtn = document.getElementById("modalCreateBtn");
+						const cancelBtn = document.getElementById("modalCancelBtn");
+
+						// Chiudi modale
+						cancelBtn?.addEventListener("click", () => {
+							modalDiv.classList.add("hidden");
+							document.body.classList.remove("overflow-hidden");
+						}, {
+							signal: abortCtrl.signal
+						});
+
+						// Crea slot
+						createBtn?.addEventListener("click", async () => {
+							const instructor = (instrSel.value || "").trim();
+							const activity = (actSel.value || "").trim();
+							const duration = parseInt(durInput.value, 10) || defDurationMin || 60;
+							const maxSeats = Math.max(1, parseInt(seatsInp.value, 10) || 1);
+
+							if (!instructor) {
+								alert("Seleziona un istruttore.");
+								return;
+							}
+							if (!activity) {
+								alert("Seleziona un'attività.");
+								return;
+							}
+
+							const startIso = modalDiv.dataset.startIso;
+							if (!startIso) {
+								alert("Selezione oraria non valida.");
+								return;
+							}
+
+							const start = new Date(startIso);
+							const end = new Date(start.getTime() + duration * 60000);
+
+							try {
+								await addDoc(collection(db, "availabilities"), {
+									instructor,
+									type: activity,
+									start: start.toISOString(),
+									end: end.toISOString(),
+									maxSeats,
+									bookedCount: 0,
+									booked: false,
+									deleted: false,
+									createdAt: new Date().toISOString()
+								});
+
+								alert("✅ Slot creato con successo!");
+								// Chiudi modale
+								modalDiv.classList.add("hidden");
+								document.body.classList.remove("overflow-hidden");
+								// Chiudi il range selezionato nel calendario (toglie l'highlight)
+								info.view.calendar.unselect();
+								// Stoppa i listener di questo giro
+								abortCtrl.abort();
+							} catch (err) {
+								console.error("Errore creazione slot:", err);
+								alert("Errore durante la creazione dello slot.");
+							}
+						}, {
+							signal: abortCtrl.signal
+						});
+					},
+
+
+
+					eventClick: async (info) => {
+						const slotId = info.event.id;
+						const slotRef = doc(db, "availabilities", slotId);
+						const s = await getDoc(slotRef);
+						if (!s.exists()) return;
+						const v = withDefaults(s.data());
+
+						// 🔍 Se slot vuoto (nessuna prenotazione)
+						if (v.bookedCount === 0) {
+							// Mostra popup "slot libero"
+							const modal = document.getElementById("freeSlotModal");
+							const infoEl = document.getElementById("freeSlotInfo");
+							const clientSel = document.getElementById("freeSlotClientSelect");
+
+							infoEl.textContent = `${v.instructor} – ${v.type || "Allenamento"} • ${new Date(toISO(v.start)).toLocaleString("it-IT")}`;
+
+							// Popola select clienti
+							clientSel.innerHTML = `<option>Caricamento...</option>`;
+							try {
+								const snap = await getDocs(collection(db, "clients"));
+								const clients = snap.docs.map(d => ({
+									id: d.id,
+									...d.data()
+								}));
+								clientSel.innerHTML = `<option value="">-- Seleziona cliente --</option>` +
+									clients.map(c => `<option value="${c.email}">${c.firstName} ${c.lastName}</option>`).join("");
+							} catch (err) {
+								clientSel.innerHTML = `<option value="">Errore caricamento</option>`;
+							}
+
+							modal.dataset.slotId = slotId;
+							modal.classList.remove("hidden");
+							document.body.classList.add("overflow-hidden");
+							return;
+						}
+
+						// Carica TUTTE le prenotazioni di questo slot
+						const qAp = query(collection(db, "appointments"), where("slotId", "==", slotId), where("cancelled", "==", false));
+						const sAp = await getDocs(qAp);
+
+						// Se non ci sono prenotazioni, conferma eliminazione slot
+						if (sAp.empty) {
+							if (confirm(`Nessuna prenotazione. Eliminare lo slot di ${v.instructor}?`)) {
+								await updateDoc(slotRef, {
+									deleted: true
+								});
+								alert("Slot eliminato.");
+							}
+							return;
+						}
+
+						// --- Recupera prenotazioni dello slot ---
+						const list = sAp.docs.map(d => ({
+							id: d.id,
+							...d.data()
+						}));
+
+						// --- Prepara array con info complete ---
+						const clientsSnap = await getDocs(collection(db, "clients"));
+						const clientsMap = {};
+						clientsSnap.forEach(c => {
+							const data = c.data();
+							if (data.email) {
+								clientsMap[data.email.trim().toLowerCase()] = `${data.firstName || ""} ${data.lastName || ""}`.trim();
+							}
+						});
+
+						const enriched = list.map(a => ({
+							...a,
+							displayName: clientsMap[a.email?.trim().toLowerCase()] || a.client || a.email || "-"
+						}));
+
+						// --- Popola select e lista ---
+						const sel = document.getElementById("adminApptSelector");
+						const ul = document.getElementById("adminParticipantsList");
+
+						sel.innerHTML = enriched
+							.map(a => `<option value="${a.id}">${a.displayName} — ${new Date(toISO(a.start)).toLocaleString()}</option>`)
+							.join("");
+
+						ul.innerHTML = enriched
+							.map(a => `
+    <li class="flex items-center justify-between py-1 border-b">
+      <span>${a.displayName} <span class="text-gray-500 text-xs">(${a.email})</span></span>
+      <span class="text-xs text-gray-600">${a.type || "-"}</span>
+    </li>
+  `)
+							.join("");
+
+
+
+						// === Se ci sono ancora posti disponibili, mostra sezione "aggiungi cliente" ===
+						const addSection = document.getElementById("addClientToGroupSection");
+						const addSelect = document.getElementById("addClientToGroupSelect");
+						const addBtn = document.getElementById("addClientToGroupBtn");
+
+						if (v.bookedCount < v.maxSeats) {
+							addSection.classList.remove("hidden");
+
+							// Popola il select con i clienti
+							addSelect.innerHTML = `<option>Caricamento...</option>`;
+							const snapClients = await getDocs(collection(db, "clients"));
+							const allClients = snapClients.docs.map(d => ({
+								id: d.id,
+								...d.data()
+							}));
+
+							// Filtra quelli NON già prenotati
+							const bookedEmails = new Set(enriched.map(e => e.email?.trim().toLowerCase()));
+							const availableClients = allClients.filter(c => !bookedEmails.has(c.email?.trim().toLowerCase()));
+
+							addSelect.innerHTML = `<option value="">-- Seleziona cliente --</option>` +
+								availableClients.map(c => `<option value="${c.email}">${c.firstName} ${c.lastName} (${c.email})</option>`).join("");
+
+							// Listener del bottone aggiungi
+							addBtn.onclick = async () => {
+								const email = addSelect.value;
+								if (!email) return alert("Seleziona un cliente da aggiungere.");
+
+								try {
+									await runTransaction(db, async (transaction) => {
+										const slotRef = doc(db, "availabilities", slotId);
+										const sSnap = await transaction.get(slotRef);
+										if (!sSnap.exists()) throw new Error("Slot non trovato.");
+										const slot = withDefaults(sSnap.data());
+										if (slot.bookedCount >= slot.maxSeats) throw new Error("Slot pieno.");
+
+										transaction.update(slotRef, {
+											bookedCount: slot.bookedCount + 1,
+											booked: (slot.bookedCount + 1) >= slot.maxSeats
+										});
+
+										const newApptRef = doc(collection(db, "appointments"));
+										transaction.set(newApptRef, {
+											client: email,
+											email,
+											instructor: slot.instructor,
+											type: slot.type,
+											start: toISO(slot.start),
+											end: toISO(slot.end),
+											slotId,
+											cancelled: false,
+											createdAt: new Date().toISOString()
+										});
+									});
+
+									alert("✅ Cliente aggiunto al gruppo!");
+									addSection.classList.add("hidden");
+									document.getElementById("bookingDetailModal").classList.add("hidden");
+									document.body.classList.remove("overflow-hidden");
+								} catch (err) {
+									alert("❌ " + err.message);
+								}
+							};
+						} else {
+							addSection.classList.add("hidden");
+						}
+
+
+						// Dati riassuntivi
+						document.getElementById("clientInstrInfo").textContent = v.instructor || "-";
+						document.getElementById("clientDateInfo").textContent = new Date(toISO(v.start)).toLocaleString();
+						document.getElementById("clientTypeInfo").textContent = `${v.type || "-" } • Posti: ${v.bookedCount}/${v.maxSeats}`;
+
+						const modal = document.getElementById("bookingDetailModal");
+						modal.dataset.slotId = slotId;
+						modal.classList.remove("hidden");
+						document.body.classList.add("overflow-hidden");
+					}
+				});
+				adminCal.render();
+
+				if (adminUnsub) adminUnsub();
+				adminUnsub = onSnapshot(collection(db, "availabilities"), async (snap) => {
+					adminCal.removeAllEvents();
+					snap.forEach(d => {
+						const v = withDefaults(d.data());
+						if (v.deleted) return;
+						const s = toISO(v.start),
+							e = toISO(v.end);
+						if (!s || !e) return;
+						const remaining = remainingSeats(v);
+						const color = v.bookedCount > 0 ? (remaining > 0 ? "#f59e0b" : "#dc2626") : "#16a34a"; // arancio se parz., rosso se pieno, verde se vuoto
+						adminCal.addEvent({
+							id: d.id,
+							title: `${v.instructor} – ${v.type || "Allenamento"} (${remaining} liberi)`,
+							start: s,
+							end: e,
+							color,
+							extendedProps: {
+								bookedCount: v.bookedCount,
+								maxSeats: v.maxSeats
+							}
+						});
+
+					});
+				});
+			}
+
+			// --------- Admin: modale dettagli + azioni ---------
+			document.getElementById("closeBookingDetail")?.addEventListener("click", () => {
+				document.getElementById("bookingDetailModal").classList.add("hidden");
+				document.body.classList.remove("overflow-hidden");
+			});
+			document.getElementById("bookingDetailModal")?.addEventListener("click", (e) => {
+				if (e.target.id === "bookingDetailModal") {
+					document.getElementById("bookingDetailModal").classList.add("hidden");
+					document.body.classList.remove("overflow-hidden");
+				}
+			});
+
+			// Cancella singola prenotazione
+			document.getElementById("adminCancelAppt")?.addEventListener("click", async () => {
+				const modal = document.getElementById("bookingDetailModal");
+				const apptId = document.getElementById("adminApptSelector").value;
+				const slotId = modal.dataset.slotId;
+				if (!apptId || !slotId) return alert("Seleziona una prenotazione.");
+				if (!confirm("Confermi cancellazione prenotazione selezionata?")) return;
+
+				try {
+					await runTransaction(db, async (transaction) => {
+						const apptRef = doc(db, "appointments", apptId);
+						const slotRef = doc(db, "availabilities", slotId);
+						const apptSnap = await transaction.get(apptRef);
+						const slotSnap = await transaction.get(slotRef);
+						if (!apptSnap.exists()) throw new Error("Prenotazione non trovata.");
+						if (!slotSnap.exists()) throw new Error("Slot non trovato.");
+						const slot = withDefaults(slotSnap.data());
+						const newCount = Math.max(0, (slot.bookedCount || 0) - 1);
+						transaction.update(apptRef, {
+							cancelled: true
+						});
+						transaction.update(slotRef, {
+							bookedCount: newCount,
+							booked: newCount >= slot.maxSeats
+						});
+					});
+					alert("Prenotazione cancellata.");
+					document.getElementById("bookingDetailModal").classList.add("hidden");
+					document.body.classList.remove("overflow-hidden");
+				} catch (err) {
+					alert(err.message);
+				}
+			});
+
+			// Sposta prenotazione (admin) con calendario e scelta prenotazione
+			let adminMoveCal = null,
+				adminMoveTarget = null;
+
+			function destroyMoveCal() {
+				if (adminMoveCal) {
+					adminMoveCal.destroy();
+					adminMoveCal = null;
+				}
+			}
+
+			document.getElementById("adminMoveAppt")?.addEventListener("click", async () => {
+				const detail = document.getElementById("bookingDetailModal");
+				const slotId = detail.dataset.slotId;
+				if (!slotId) return;
+
+				const s = await getDoc(doc(db, "availabilities", slotId));
+				const v = withDefaults(s.data());
+
+				// 🔽 Popola select istruttori
+				const instructorSelect = document.getElementById("adminMoveInstructor");
+				instructorSelect.innerHTML = `<option value="">Caricamento...</option>`;
+				try {
+					const snap = await getDocs(collection(db, "trainers"));
+					const trainers = snap.docs.map(d => d.data().name);
+					instructorSelect.innerHTML =
+						`<option value="ALL">Tutti gli istruttori</option>` +
+						trainers.map(t => `<option value="${t}" ${t === v.instructor ? "selected" : ""}>${t}</option>`).join("");
+					instructorSelect.value = "ALL";
+
+				} catch (err) {
+					console.error("Errore caricamento istruttori:", err);
+					instructorSelect.innerHTML = `<option value="">Errore</option>`;
+				}
+
+				document.getElementById("adminMoveDate").value = toISO(v.start).slice(0, 10);
+				document.getElementById("adminMoveSelection").textContent = "Nessuno slot selezionato.";
+				adminMoveTarget = null;
+
+				document.getElementById("adminMoveModal").classList.remove("hidden");
+				destroyMoveCal();
+				initMoveCalendar();
+
+				document.getElementById("adminMoveDate").value = toISO(v.start).slice(0, 10);
+				document.getElementById("adminMoveSelection").textContent = "Nessuno slot selezionato.";
+				adminMoveTarget = null;
+
+				document.getElementById("adminMoveModal").classList.remove("hidden");
+				destroyMoveCal();
+				initMoveCalendar();
+			});
+
+			function initMoveCalendar() {
+				const date = document.getElementById("adminMoveDate").value;
+				const inst = document.getElementById("adminMoveInstructor").value;
+				const calEl = document.getElementById("adminMoveCalendar");
+				if (!date || !inst) return;
+				destroyMoveCal();
+				adminMoveCal = new FullCalendar.Calendar(calEl, {
+					initialView: "timeGridDay",
+					initialDate: date,
+					allDaySlot: false,
+					height: "auto",
+					headerToolbar: {
+						left: "prev,next today",
+						center: "title",
+						right: "timeGridDay"
+					},
+					eventClick: (info) => {
+						adminMoveCal.getEvents().forEach(ev => ev.setProp("color", "#16a34a"));
+						info.event.setProp("color", "#2563eb");
+						adminMoveTarget = info.event.id;
+						document.getElementById("adminMoveSelection").textContent =
+							`Nuovo slot: ${info.event.title} — ${info.event.start.toLocaleString()}`;
+					}
+				});
+				adminMoveCal.render();
+
+				const q = query(collection(db, "availabilities"), where("deleted", "==", false));
+				onSnapshot(q, (snap) => {
+					adminMoveCal.removeAllEvents();
+					snap.forEach(d => {
+						const v = withDefaults(d.data());
+						const s = toISO(v.start),
+							e = toISO(v.end);
+						if (!s || !e) return;
+						const sameDay = new Date(s).toISOString().slice(0, 10) === date;
+						const rem = remainingSeats(v);
+						if (sameDay && (inst === "ALL" || v.instructor === inst) && rem > 0) {
+							adminMoveCal.addEvent({
+								id: d.id,
+								title: `${v.instructor} (${rem} liberi)`,
+								start: s,
+								end: e,
+								color: "#16a34a"
+							});
+						}
+
+					});
+				});
+			}
+
+			document.getElementById("adminMoveInstructor").addEventListener("change", () => {
+				initMoveCalendar();
+			});
+
+
+			document.getElementById("adminMoveLoadSlots")?.addEventListener("click", () => initMoveCalendar());
+			document.getElementById("adminMoveCancel")?.addEventListener("click", () => {
+				document.getElementById("adminMoveModal").classList.add("hidden");
+				document.body.classList.remove("overflow-hidden");
+				destroyMoveCal();
+			});
+
+			// Conferma spostamento prenotazione selezionata
+			document.getElementById("adminMoveConfirm")?.addEventListener("click", async () => {
+				const apptId = document.getElementById("adminApptSelector").value;
+				const detail = document.getElementById("bookingDetailModal");
+				const oldSlotId = detail.dataset.slotId;
+				if (!apptId || !oldSlotId || !adminMoveTarget) return alert("Seleziona slot e prenotazione.");
+				try {
+					await runTransaction(db, async (transaction) => {
+						const apptRef = doc(db, "appointments", apptId);
+						const apptSnap = await transaction.get(apptRef);
+						if (!apptSnap.exists()) throw new Error("Prenotazione non trovata.");
+
+						const oldRef = doc(db, "availabilities", oldSlotId);
+						const newRef = doc(db, "availabilities", adminMoveTarget);
+						const oldSnap = await transaction.get(oldRef);
+						const newSnap = await transaction.get(newRef);
+						if (!oldSnap.exists() || !newSnap.exists()) throw new Error("Slot non trovato.");
+
+						const oldSlot = withDefaults(oldSnap.data());
+						const newSlot = withDefaults(newSnap.data());
+						if (remainingSeats(newSlot) <= 0) throw new Error("Nuovo slot pieno.");
+
+						const oldNewCount = Math.max(0, (oldSlot.bookedCount || 0) - 1);
+						const newNewCount = (newSlot.bookedCount || 0) + 1;
+
+						transaction.update(oldRef, {
+							bookedCount: oldNewCount,
+							booked: oldNewCount >= oldSlot.maxSeats
+						});
+						transaction.update(newRef, {
+							bookedCount: newNewCount,
+							booked: newNewCount >= newSlot.maxSeats
+						});
+						transaction.update(apptRef, {
+							instructor: newSlot.instructor,
+							start: toISO(newSlot.start),
+							end: toISO(newSlot.end),
+							slotId: adminMoveTarget,
+							modifiedAt: new Date().toISOString()
+						});
+					});
+					alert("Prenotazione spostata.");
+					document.getElementById("adminMoveModal").classList.add("hidden");
+					document.getElementById("bookingDetailModal").classList.add("hidden");
+					document.body.classList.remove("overflow-hidden");
+					destroyMoveCal();
+				} catch (err) {
+					alert(err.message);
+				}
+			});
+
+			// --------- Routing + Auth state ----------
+			async function route() {
+				const user = auth.currentUser;
+				if (location.hash === "#admin") {
+					if (user) {
+						const adminDoc = await getDoc(doc(db, "admins", user.email));
+						if (adminDoc.exists()) {
+							showSection("adminPanel");
+							initAdminCalendars();
+						} else {
+							alert("❌ Accesso negato: non sei un amministratore.");
+							showSection("clientLogin");
+							location.hash = "";
+						}
+					} else {
+						showSection("adminLogin");
+					}
+				} else {
+					if (user) {
+						// ⚠️ Controllo stato approvazione cliente
+						try {
+							const qClient = query(collection(db, "clients"), where("uid", "==", user.uid));
+							const snap = await getDocs(qClient);
+
+							if (snap.empty) {
+								alert("Profilo cliente non trovato. Contatta lo studio.");
+								await signOut(auth);
+								showSection("clientLogin");
+								return;
+							}
+
+							const clientDoc = snap.docs[0].data();
+							const status = clientDoc.status || "pending";
+
+							if (status !== "approved") {
+								alert("Il tuo account è in attesa di approvazione. Ti avviseremo appena sarà attivo.");
+								await signOut(auth);
+								showSection("clientLogin");
+								return;
+							}
+
+							// ✅ Utente approvato: prosegui normalmente
+							showSection("clientDashboard");
+							loadClientAppointments(user.email);
+						} catch (err) {
+							console.error("Errore controllo stato cliente:", err);
+							alert("Si è verificato un errore. Riprova più tardi.");
+							await signOut(auth);
+							showSection("clientLogin");
+						}
+					} else {
+						showSection("clientLogin");
+					}
+				}
+
+			}
+
+			window.addEventListener("hashchange", route);
+			onAuthStateChanged(auth, () => route());
+			route();
+		});
+
+
+
+
+
+
+
+
+
+		function exportReportToPDF() {
+			const {
+				jsPDF
+			} = window.jspdf;
+			const doc = new jsPDF();
+
+			const headers = [
+				["Giorno", "Ora", "Istruttore", "Tipo", "Prenotati/Totale"]
+			];
+			const data = [];
+
+			document.querySelectorAll("#reportTableBody tr").forEach(tr => {
+				const tds = tr.querySelectorAll("td");
+				if (tds.length === 4) {
+					const [istruttore, tipo, dataOra, posti] = Array.from(tds).map(td => td.textContent.trim());
+					const [giorno, ora] = dataOra.split(", ");
+					data.push([giorno, ora || "", istruttore, tipo, posti]);
+				}
+			});
+
+			doc.setFontSize(14);
+			doc.text("Report settimanale allenamenti", 14, 15);
+			doc.autoTable({
+				startY: 20,
+				head: headers,
+				body: data,
+				styles: {
+					fontSize: 10
+				}
+			});
+
+			doc.save("report_settimanale.pdf");
+		}
+
+
+
+		// === Gestione Modale Slot Libero ===
+		document.getElementById("freeSlotCancel")?.addEventListener("click", () => {
+			document.getElementById("freeSlotModal").classList.add("hidden");
+			document.body.classList.remove("overflow-hidden");
+		});
+
+		document.getElementById("freeSlotDelete")?.addEventListener("click", async () => {
+			const modal = document.getElementById("freeSlotModal");
+			const slotId = modal.dataset.slotId;
+			if (!confirm("Vuoi davvero eliminare questo slot?")) return;
+
+			try {
+				await updateDoc(doc(db, "availabilities", slotId), {
+					deleted: true
+				});
+				alert("✅ Slot eliminato.");
+				modal.classList.add("hidden");
+				document.body.classList.remove("overflow-hidden");
+			} catch (err) {
+				alert("Errore durante l'eliminazione dello slot: " + err.message);
+			}
+		});
+
+		document.getElementById("freeSlotBook")?.addEventListener("click", async () => {
+			const modal = document.getElementById("freeSlotModal");
+			const slotId = modal.dataset.slotId;
+			const email = document.getElementById("freeSlotClientSelect").value;
+			if (!email) return alert("Seleziona un cliente.");
+
+			const slotRef = doc(db, "availabilities", slotId);
+			try {
+				await runTransaction(db, async (transaction) => {
+					const sSnap = await transaction.get(slotRef);
+					if (!sSnap.exists()) throw new Error("Slot non trovato.");
+					const slot = withDefaults(sSnap.data());
+					if (slot.bookedCount >= slot.maxSeats) throw new Error("Slot pieno.");
+
+					transaction.update(slotRef, {
+						bookedCount: slot.bookedCount + 1,
+						booked: (slot.bookedCount + 1) >= slot.maxSeats
+					});
+
+					const newApptRef = doc(collection(db, "appointments"));
+					transaction.set(newApptRef, {
+						client: email,
+						email,
+						instructor: slot.instructor,
+						type: slot.type,
+						start: toISO(slot.start),
+						end: toISO(slot.end),
+						slotId,
+						cancelled: false,
+						createdAt: new Date().toISOString()
+					});
+				});
+
+				alert("✅ Prenotazione aggiunta correttamente!");
+				modal.classList.add("hidden");
+				document.body.classList.remove("overflow-hidden");
+			} catch (err) {
+				alert("❌ " + err.message);
+			}
+		});
+
+	</script>
+</head>
+
+<body class="bg-gray-100 min-h-screen">
+
+	<!-- CLIENT: LOGIN -->
+	<section id="clientLogin" class="max-w-md mx-auto mt-20 bg-white p-6 rounded-xl shadow-md">
+		<h1 class="text-2xl font-bold text-center text-green-700 mb-4">Area Clienti</h1>
+		<form id="clientLoginForm">
+			<input id="loginEmail" type="email" placeholder="Email" required class="w-full p-2 border rounded mb-2" />
+			<input id="loginPass" type="password" placeholder="Password" required class="w-full p-2 border rounded mb-3" />
+			<button type="submit" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">Accedi</button>
+		</form>
+		<form id="clientRegisterForm" class="hidden mt-4 space-y-2">
+			<input id="regFirstName" type="text" placeholder="Nome" required class="w-full p-2 border rounded" />
+			<input id="regLastName" type="text" placeholder="Cognome" required class="w-full p-2 border rounded" />
+			<input id="regPhone" type="tel" placeholder="Telefono" pattern="[0-9+ ]{7,15}" required class="w-full p-2 border rounded" />
+			<input id="regEmail" type="email" placeholder="Email" required class="w-full p-2 border rounded" />
+			<input id="regPass" type="password" placeholder="Password" required class="w-full p-2 border rounded mb-3" />
+			<button type="submit" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">Registrati</button>
+		</form>
+		<form id="resetPasswordForm" class="hidden mt-4">
+			<input id="resetEmail" type="email" placeholder="Email per reset" required class="w-full p-2 border rounded mb-3" />
+			<button type="submit" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">Invia</button>
+		</form>
+		<p class="text-center text-sm text-gray-500 mt-4">
+			<button id="switchToRegister" class="text-green-600 underline">Registrati</button> /
+			<button id="switchToLogin" class="text-green-600 underline">Accedi</button>
+		</p>
+		<p class="text-center text-sm text-gray-500 mt-3">
+			<button id="forgotPasswordLink" class="text-green-600 underline">Password dimenticata?</button>
+		</p>
+		<p class="text-center text-sm text-gray-500 mt-4">
+			Sei un istruttore? <a href="#admin" class="text-green-600 underline">Area Admin</a>
+		</p>
+	</section>
+
+	<!-- CLIENT: DASHBOARD -->
+	<section id="clientDashboard" class="hidden max-w-5xl mx-auto mt-10 bg-white p-6 rounded-xl shadow-lg">
+		<div class="flex justify-between items-center mb-4">
+			<h2 class="text-2xl font-bold text-green-700">Le mie prenotazioni</h2>
+			<div class="space-x-2">
+				<button id="newBookingBtn" class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Prenota nuovo</button>
+				<button id="clientLogout" class="bg-gray-300 px-3 py-1 rounded hover:bg-gray-400">Logout</button>
+			</div>
+		</div>
+		<table class="w-full text-sm border">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="p-2 border">Istruttore</th>
+					<th class="p-2 border">Tipo</th>
+					<th class="p-2 border">Data</th>
+					<th class="p-2 border">Azioni</th>
+				</tr>
+			</thead>
+			<tbody id="apptTableBody">
+				<h3 class="text-xl font-semibold mt-6 mb-2 text-gray-700">Storico Prenotazioni</h3>
+				<table class="w-full text-sm border">
+					<thead class="bg-gray-100">
+						<tr>
+							<th class="p-2 border">Istruttore</th>
+							<th class="p-2 border">Tipo</th>
+							<th class="p-2 border">Data</th>
+						</tr>
+					</thead>
+					<tbody id="apptHistoryBody"></tbody>
+				</table>
+
+
+
+
+				<!-- Modal Selezione Slot -->
+				<div id="slotModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z‑50">
+					<div class="bg-white p-6 rounded-lg max-w-sm w-full space-y-4">
+						<h2 class="text-lg font-semibold">Nuovo slot</h2>
+						<div>
+							<label class="block mb-1">Istruttore</label>
+							<select id="modalInstructorSelect" class="w-full p-2 border rounded"></select>
+						</div>
+						<div>
+							<label class="block mb-1">Disciplina</label>
+							<select id="modalTypeSelect" class="w-full p-2 border rounded"></select>
+						</div>
+						<div class="flex justify-end space-x-2">
+							<button id="modalCancel" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Annulla</button>
+							<button id="modalSubmit" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Crea slot</button>
+						</div>
+					</div>
+				</div>
+
+
+
+			</tbody>
+
+
+
+
+		</table>
+	</section>
+
+	<!-- CLIENT: PRENOTA -->
+	<section id="clientBooking" class="hidden max-w-4xl mx-auto mt-10 bg-white p-6 rounded-xl shadow-lg">
+		<div class="flex justify-between mb-3">
+			<h1 class="text-2xl font-bold text-green-700">Prenota appuntamento</h1>
+			<button id="backToDashboard" class="bg-gray-300 px-3 py-1 rounded hover:bg-gray-400">Indietro</button>
+		</div>
+		<div class="space-y-3 mb-3">
+			<div>
+				<label class="font-semibold">Istruttore</label>
+				<select id="instructorSelect" class="border p-2 rounded w-full">
+					<option value="ALL">Tutti gli istruttori</option>
+				</select>
+			</div>
+			<div>
+				<label class="font-semibold">Tipo allenamento</label>
+				<select id="trainingType" class="border p-2 rounded w-full">
+					<option value="ALL">Tutti gli allenamenti</option>
+					<option value="Pilates">Pilates</option>
+					<option value="Funzionale">Funzionale</option>
+					<option value="Pesi">Pesi</option>
+				</select>
+			</div>
+			<div>
+				<label class="font-semibold">Data</label>
+				<input type="date" id="bookingDate" class="border p-2 rounded w-full">
+			</div>
+			<button id="loadSlotsBtn" class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 w-full">
+				Mostra orari
+			</button>
+		</div>
+		<div id="clientCalendar" class="border rounded shadow-sm"></div>
+
+
+		<!-- Conferma -->
+		<div id="confirmModal" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50">
+			<div class="bg-white p-6 rounded-lg shadow-lg max-w-sm w-full">
+				<h2 class="text-lg font-semibold text-green-700 mb-2">Conferma</h2>
+				<p id="confirmText" class="text-gray-700 mb-4"></p>
+				<div class="flex justify-end space-x-2">
+					<button id="cancelBooking" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Annulla</button>
+					<button id="confirmBooking" class="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Conferma</button>
+				</div>
+			</div>
+		</div>
+	</section>
+
+	<!-- CLIENT: MODALE MODIFICA -->
+	<div id="editModal" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50">
+		<div class="bg-white p-6 rounded-lg shadow-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+			<h2 class="text-lg font-semibold text-green-700 mb-3">✏️ Modifica prenotazione</h2>
+			<p id="editInfo" class="text-gray-700 mb-4"></p>
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+				<div><label class="font-semibold block mb-1">Istruttore</label><select id="editInstructor" class="border p-2 rounded w-full"></select></div>
+				<div><label class="font-semibold block mb-1">Tipo</label>
+					<select id="editType" class="border p-2 rounded w-full">
+						<option value="ALL">Tutti gli allenamenti</option>
+						<option value="Pilates">Pilates</option>
+						<option value="Funzionale">Funzionale</option>
+						<option value="Pesi">Pesi</option>
+					</select>
+
+				</div>
+				<div><label class="font-semibold block mb-1">Data</label><input type="date" id="editDate" class="border p-2 rounded w-full" /></div>
+			</div>
+			<button id="loadEditSlotsBtn" class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 w-full mb-4">Mostra orari disponibili</button>
+			<p id="editSelection" class="text-sm text-gray-600 mb-2">Nessuno slot selezionato.</p>
+			<div id="editCalendar" class="border rounded shadow-sm mb-4"></div>
+			<div class="flex justify-end space-x-2">
+				<button id="cancelEdit" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Annulla</button>
+				<button id="confirmEdit" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Salva modifiche</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- ADMIN: LOGIN -->
+	<section id="adminLogin" class="hidden max-w-md mx-auto mt-20 bg-white p-6 rounded-xl shadow-md">
+		<h2 class="text-2xl font-bold text-center mb-4 text-green-700">Accesso Admin</h2>
+		<form id="adminLoginForm" class="space-y-4">
+			<input id="adminEmail" type="email" placeholder="Email" required class="w-full p-2 border rounded" />
+			<input id="adminPassword" type="password" placeholder="Password" required class="w-full p-2 border rounded" />
+			<button type="submit" class="w-full bg-green-600 text-white py-2 rounded hover:bg-green-700">Accedi</button>
+			<p class="mt-4 text-center text-sm text-gray-600">
+				<a href="#" id="backToClientLogin" class="text-blue-600 hover:underline">🔙 Torna all'accesso clienti</a>
+			</p>
+
+		</form>
+	</section>
+
+	<!-- ADMIN: PANEL -->
+	<section id="adminPanel" class="hidden max-w-6xl mx-auto mt-10 bg-white p-6 rounded-xl shadow-lg">
+		<div class="flex justify-between items-center mb-4">
+			<h2 class="text-2xl font-bold text-green-700">Gestione Studio</h2>
+			<button id="adminNewBookingBtn" class="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 mt-4">➕ Nuova prenotazione</button>
+			<button id="logoutBtn" class="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700 mt-4">Logout</button>
+			<button id="openReport" class="bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 mt-4">📊 Report</button>
+			<button id="openTrainersBtn" class="bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700 mt-4">Gestione Istruttori</button>
+			<button id="openClientsBtn" class="bg-teal-600 text-white px-3 py-1 rounded hover:bg-teal-700 mt-4">👥 Gestione Clienti</button>
+		</div>
+		<div id="calendarStudio" class="border rounded shadow-sm"></div>
+	</section>
+
+
+
+	<section id="adminTrainers" class="hidden max-w-4xl mx-auto mt-10 bg-white p-6 rounded-xl shadow-lg">
+		<div class="flex justify-between items-center mb-4">
+			<h2 class="text-2xl font-bold text-green-700">Gestione Istruttori</h2>
+			<button id="backToAdminPanel" class="bg-gray-300 px-3 py-1 rounded hover:bg-gray-400">← Torna</button>
+		</div>
+
+		<div class="mb-6">
+			<h3 class="font-semibold mb-2">Aggiungi nuovo istruttore</h3>
+			<div class="space-y-2">
+				<input type="text" id="newTrainerName" placeholder="Nome istruttore" class="w-full p-2 border rounded" />
+				<input type="text" id="newTrainerActivities" placeholder="Attività (separate da virgola, es: Pilates,Funzionale)" class="w-full p-2 border rounded" />
+				<button id="addTrainerBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Aggiungi istruttore</button>
+			</div>
+		</div>
+
+		<h3 class="font-semibold mb-2">Elenco istruttori</h3>
+		<table class="w-full text-sm border mb-4">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="p-2 border">Nome</th>
+					<th class="p-2 border">Attività</th>
+					<th class="p-2 border">Azioni</th>
+				</tr>
+			</thead>
+			<tbody id="trainersTableBody"></tbody>
+		</table>
+	</section>
+
+
+
+
+	<section id="adminClients" class="hidden max-w-5xl mx-auto mt-10 bg-white p-6 rounded-xl shadow-lg">
+		<div class="flex justify-between items-center mb-4">
+			<h2 class="text-2xl font-bold text-green-700">Gestione Clienti</h2>
+			<button id="backToAdminPanelFromClients" class="bg-gray-300 px-3 py-1 rounded hover:bg-gray-400">← Torna</button>
+		</div>
+
+		<table class="w-full text-sm border mb-4">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="p-2 border">Nome</th>
+					<th class="p-2 border">Cognome</th>
+					<th class="p-2 border">Telefono</th>
+					<th class="p-2 border">Email</th>
+					<th class="p-2 border">Data registrazione</th>
+					<th class="p-2 border">Stato</th>
+					<th class="p-2 border text-center">Azioni</th>
+				</tr>
+			</thead>
+			<tbody id="clientsTableBody">
+				<tr>
+					<td colspan="6" class="p-3 text-center text-gray-500">Caricamento...</td>
+				</tr>
+			</tbody>
+		</table>
+
+	</section>
+
+
+	<!-- ADMIN: MODALE DETTAGLI PRENOTAZIONE (multi-partecipanti) -->
+	<div id="bookingDetailModal" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50">
+		<div class="bg-white p-6 rounded-lg shadow-lg max-w-lg w-full">
+			<h2 class="text-lg font-semibold text-green-700 mb-4">Dettagli Slot</h2>
+
+			<div class="grid grid-cols-2 gap-3 text-gray-700 text-sm">
+				<p><strong>Istruttore:</strong> <span id="clientInstrInfo"></span></p>
+				<p><strong>Data e Ora:</strong> <span id="clientDateInfo"></span></p>
+				<p><strong>Stato:</strong> <span id="clientTypeInfo"></span></p>
+				<p><strong>Seleziona prenotazione:</strong>
+					<select id="adminApptSelector" class="border p-1 rounded w-full"></select>
+				</p>
+			</div>
+
+			<h3 class="mt-4 font-semibold text-sm text-gray-700">Partecipanti</h3>
+			<ul id="adminParticipantsList" class="text-sm text-gray-700 mt-1 mb-4 max-h-40 overflow-y-auto border rounded p-2 bg-gray-50"></ul>
+			<!-- Aggiungi prenotazione a slot di gruppo -->
+			<div id="addClientToGroupSection" class="border-t pt-3 mt-3 hidden">
+				<h4 class="font-semibold text-sm text-gray-700 mb-2">➕ Aggiungi partecipante</h4>
+				<div class="flex items-center gap-2">
+					<select id="addClientToGroupSelect" class="border p-2 rounded w-full"></select>
+					<button id="addClientToGroupBtn" class="bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700 whitespace-nowrap">Aggiungi</button>
+				</div>
+			</div>
+
+			<div class="flex justify-between">
+				<button id="adminCancelAppt" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Cancella prenotazione</button>
+				<div class="space-x-2">
+					<button id="closeBookingDetail" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Chiudi</button>
+					<button id="adminMoveAppt" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Sposta prenotazione</button>
+				</div>
+			</div>
+		</div>
+	</div>
+
+
+
+	<section id="adminReport" class="hidden max-w-6xl mx-auto mt-10 bg-white p-6 rounded-xl shadow-lg">
+		<div class="flex justify-between items-center mb-4">
+			<h2 class="text-2xl font-bold text-green-700">Report Personalizzato</h2>
+			<button id="backToCalendar" class="bg-gray-300 px-3 py-1 rounded hover:bg-gray-400">Torna al calendario</button>
+			<button id="exportReportPDF" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700">
+				🧾 Esporta PDF
+			</button>
+
+		</div>
+		<div class="flex flex-wrap gap-4 items-center mb-4">
+			<div>
+				<label class="block text-sm font-semibold mb-1">Istruttore:</label>
+				<select id="reportInstructorSelect" class="border p-2 rounded min-w-[200px]">
+					<option value="ALL">Tutti</option>
+				</select>
+			</div>
+			<div>
+				<label class="block text-sm font-semibold mb-1">Data Inizio:</label>
+				<input type="date" id="reportStartDate" class="border p-2 rounded">
+			</div>
+			<div>
+				<label class="block text-sm font-semibold mb-1">Data Fine:</label>
+				<input type="date" id="reportEndDate" class="border p-2 rounded">
+			</div>
+			<div class="flex items-end">
+				<button id="loadReportBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">🔍 Carica Report</button>
+
+
+
+			</div>
+		</div>
+		<table class="w-full text-sm border">
+			<thead class="bg-gray-100">
+				<tr>
+					<th class="p-2 border">Data</th>
+					<th class="p-2 border">Ora</th>
+					<th class="p-2 border">Istruttore</th>
+					<th class="p-2 border">Disciplina</th>
+					<th class="p-2 border">Posti</th>
+				</tr>
+			</thead>
+			<tbody id="reportTableBody"></tbody>
+		</table>
+	</section>
+
+
+
+
+
+
+
+
+	<!-- ADMIN: MODALE SPOSTA PRENOTAZIONE -->
+	<div id="adminMoveModal" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50">
+		<div class="bg-white p-6 rounded-lg shadow-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+			<h2 class="text-lg font-semibold text-green-700 mb-3">Sposta prenotazione</h2>
+			<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+				<div>
+					<label class="font-semibold block mb-1">Istruttore</label>
+					<select id="adminMoveInstructor" class="border p-2 rounded w-full">
+						<option value="">Seleziona istruttore</option>
+					</select>
+				</div>
+
+				<div><label class="font-semibold block mb-1">Data</label><input type="date" id="adminMoveDate" class="border p-2 rounded w-full" /></div>
+				<div class="flex items-end"><button id="adminMoveLoadSlots" class="w-full bg-green-600 text-white px-3 py-2 rounded hover:bg-green-700">Mostra orari</button></div>
+			</div>
+			<p id="adminMoveSelection" class="text-sm text-gray-600 mb-2">Nessuno slot selezionato.</p>
+			<div id="adminMoveCalendar" class="border rounded shadow-sm mb-4"></div>
+			<div class="flex justify-end space-x-2">
+				<button id="adminMoveCancel" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Annulla</button>
+				<button id="adminMoveConfirm" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Conferma spostamento</button>
+			</div>
+		</div>
+	</div>
+
+
+
+
+
+	<!-- Modale creazione slot (admin) -->
+	<div id="slotCreationModal" class="hidden fixed inset-0 modal-backdrop flex items-center justify-center z-50">
+		<div class="bg-white p-6 rounded-lg max-w-md w-full space-y-4">
+			<h2 class="text-lg font-semibold text-green-700">Crea nuovo slot</h2>
+			<div>
+				<label class="block mb-1 font-semibold">Istruttore</label>
+				<select id="adminModalInstructorSelect" class="w-full p-2 border rounded">
+					<option value="">Seleziona istruttore</option>
+				</select>
+			</div>
+			<div>
+				<label class="block mb-1 font-semibold">Attività</label>
+				<select id="adminModalActivitySelect" class="w-full p-2 border rounded">
+					<option value="">Seleziona attività</option>
+				</select>
+			</div>
+			<div>
+				<label class="block mb-1 font-semibold">Durata (minuti)</label>
+				<input type="number" id="modalDuration" class="w-full p-2 border rounded" placeholder="Es. 60" min="1">
+			</div>
+			<div>
+				<label class="block mb-1 font-semibold">Numero massimo partecipanti</label>
+				<input type="number" id="modalMaxSeats" class="w-full p-2 border rounded" placeholder="Es. 1" min="1">
+			</div>
+			<div class="flex justify-end space-x-2">
+				<button id="modalCancelBtn" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Annulla</button>
+				<button id="modalCreateBtn" class="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">Crea slot</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- MODALE: Prenotazioni Cliente -->
+	<div id="clientBookingsModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+		<div class="bg-white p-6 rounded-lg shadow-lg max-w-3xl w-full max-h-[80vh] overflow-y-auto">
+			<h2 class="text-xl font-semibold text-green-700 mb-4">📅 Prenotazioni future</h2>
+			<p id="clientBookingsName" class="text-gray-700 mb-3 font-medium"></p>
+
+			<table class="w-full text-sm border mb-4">
+				<thead class="bg-gray-100">
+					<tr>
+						<th class="p-2 border">Data</th>
+						<th class="p-2 border">Ora</th>
+						<th class="p-2 border">Istruttore</th>
+						<th class="p-2 border">Attività</th>
+					</tr>
+				</thead>
+				<tbody id="clientBookingsTableBody">
+					<tr>
+						<td colspan="4" class="p-3 text-center text-gray-500">Caricamento...</td>
+					</tr>
+				</tbody>
+			</table>
+
+			<div class="flex justify-end">
+				<button id="closeClientBookings" class="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Chiudi</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- MODALE: Nuova Prenotazione Admin -->
+	<div id="adminNewBookingModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+		<div class="bg-white p-6 rounded-lg shadow-lg max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+			<h2 class="text-xl font-semibold text-green-700 mb-4">➕ Crea Prenotazione Manuale</h2>
+
+			<div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+				<div>
+					<label class="block font-semibold mb-1">Cliente</label>
+					<select id="adminBookingClientSelect" class="border p-2 rounded w-full"></select>
+				</div>
+				<div>
+					<label class="block font-semibold mb-1">Istruttore</label>
+					<select id="adminBookingInstructorSelect" class="border p-2 rounded w-full"></select>
+				</div>
+				<div>
+					<label class="block font-semibold mb-1">Data</label>
+					<input type="date" id="adminBookingDate" class="border p-2 rounded w-full">
+				</div>
+			</div>
+
+			<button id="adminBookingLoadSlots" class="bg-blue-600 text-white px-3 py-2 rounded hover:bg-blue-700 mb-3 w-full">
+				Mostra slot disponibili
+			</button>
+
+			<div id="adminBookingCalendar" class="border rounded shadow-sm mb-4"></div>
+
+			<div class="flex justify-end space-x-2">
+				<button id="adminBookingCancel" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Annulla</button>
+				<button id="adminBookingConfirm" class="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Conferma Prenotazione</button>
+			</div>
+		</div>
+	</div>
+
+
+	<!-- MODALE: Azioni Slot Libero -->
+	<div id="freeSlotModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+		<div class="bg-white p-6 rounded-lg shadow-lg max-w-md w-full space-y-4">
+			<h2 class="text-lg font-semibold text-green-700">Slot libero</h2>
+			<p id="freeSlotInfo" class="text-gray-700"></p>
+			<div>
+				<label class="block mb-1 font-semibold">Cliente</label>
+				<select id="freeSlotClientSelect" class="border p-2 rounded w-full"></select>
+			</div>
+			<div class="flex justify-end space-x-2">
+				<button id="freeSlotCancel" class="px-3 py-1 bg-gray-300 rounded hover:bg-gray-400">Annulla</button>
+				<button id="freeSlotDelete" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700">Elimina Slot</button>
+				<button id="freeSlotBook" class="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">Aggiungi Prenotazione</button>
+			</div>
+		</div>
+	</div>
+
+
+
+</body>
+
+</html>
