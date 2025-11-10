@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Collezione Monete</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen">
+  <div class="container mx-auto p-6">
+    <h1 class="text-3xl font-bold mb-6 text-center">Collezione di Monete</h1>
+
+    <!-- Sezione Inserimento -->
+    <div class="bg-white shadow-md rounded-xl p-6 mb-10">
+      <h2 class="text-xl font-semibold mb-4">Aggiungi una nuova moneta</h2>
+      <form id="coinForm" class="grid md:grid-cols-2 gap-4">
+        <input type="text" id="name" placeholder="Nome" required class="border p-2 rounded w-full" />
+        <input type="number" id="value" placeholder="Valore (€)" required class="border p-2 rounded w-full" />
+<input type="number" id="quantity" placeholder="Quantità" min="1" class="border p-2 rounded w-full" />
+
+        <!-- Paese con suggerimenti -->
+        <div>
+          <input list="countryList" id="country" placeholder="Paese di rilascio" required class="border p-2 rounded w-full" />
+          <datalist id="countryList"></datalist>
+        </div>
+
+        <!-- Categoria con suggerimenti -->
+        <div>
+          <input list="categoryList" id="category" placeholder="Categoria (es. Antiche, Euro, Ricordo...)" required class="border p-2 rounded w-full" />
+          <datalist id="categoryList"></datalist>
+        </div>
+
+        <div class="md:col-span-2">
+          <input type="file" id="photo" accept="image/*" class="border p-2 rounded w-full mb-2" />
+          <img id="preview" src="" alt="Anteprima foto" class="hidden rounded w-40 h-40 object-cover border" />
+        </div>
+
+        <button type="submit" class="bg-blue-600 text-white p-2 rounded hover:bg-blue-700 md:col-span-2">Salva Moneta</button>
+      </form>
+    </div>
+
+    <!-- Sezione Filtri -->
+    <div class="bg-white shadow-md rounded-xl p-4 mb-6 flex flex-col md:flex-row gap-4 items-center justify-between">
+      <input type="text" id="search" placeholder="Cerca per nome..." class="border p-2 rounded w-full md:w-1/3" />
+      <select id="filterCategory" class="border p-2 rounded w-full md:w-1/3">
+        <option value="">Tutte le categorie</option>
+      </select>
+      <p id="totalValue" class="font-semibold text-gray-700">Valore Totale: €0</p>
+    </div>
+
+    <!-- Sezione Elenco -->
+    <div id="coinList" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+
+    <!-- Modal Dettaglio / Modifica -->
+    <div id="coinModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-auto">
+      <div class="bg-white rounded-xl p-6 w-11/12 max-w-md relative my-10 max-h-[90vh] overflow-y-auto shadow-lg">
+        <button id="closeModal" class="absolute top-2 right-2 text-gray-600 hover:text-black text-xl">✖</button>
+
+        <img id="modalImage" src="" alt="moneta" class="rounded mb-4 w-full object-cover max-h-60">
+        <h3 id="modalName" class="text-2xl font-bold mb-2 text-center"></h3>
+
+        <div class="space-y-1 mb-4">
+          <p><strong>Valore:</strong> €<span id="modalValue"></span></p>
+          <p><strong>Quantità:</strong> <span id="modalQuantity"></span></p>
+          <p><strong>Paese:</strong> <span id="modalCountry"></span></p>
+          <p><strong>Categoria:</strong> <span id="modalCategory"></span></p>
+        </div>
+
+        <div class="flex justify-between gap-2 mb-4">
+          <button id="editBtn" class="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded">Modifica</button>
+          <button id="deleteBtn" class="flex-1 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded">Elimina</button>
+        </div>
+
+        <!-- Form modifica -->
+        <form id="editForm" class="hidden mt-2 grid gap-3">
+          <input type="text" id="editName" class="border p-2 rounded" placeholder="Nome" />
+          <input type="number" id="editValue" class="border p-2 rounded" placeholder="Valore (€)" />
+          <input type="number" id="editQuantity" class="border p-2 rounded" placeholder="Quantità" min="1" />
+          <input list="editCountryList" id="editCountry" placeholder="Paese di rilascio" class="border p-2 rounded w-full" />
+          <datalist id="editCountryList"></datalist>
+          <input list="editCategoryList" id="editCategory" placeholder="Categoria" class="border p-2 rounded w-full" />
+          <datalist id="editCategoryList"></datalist>
+          <input type="file" id="editPhoto" accept="image/*" class="border p-2 rounded" />
+          <button type="submit" class="bg-green-600 hover:bg-green-700 text-white p-2 rounded mt-2">💾 Salva modifiche</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+    import { getFirestore, collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore.js";
+
+    // === CONFIGURAZIONE FIREBASE ===
+    const firebaseConfig = {
+      apiKey: "AIzaSyDAJ75IXtDQYQ5A2MVx2ur5gegjOac2oi0",
+      authDomain: "inventario-80e14.firebaseapp.com",
+      projectId: "inventario-80e14",
+      storageBucket: "inventario-80e14.appspot.com",
+      messagingSenderId: "943338477095",
+      appId: "1:943338477095:web:1ba13d4b1bea892def6002"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const coinsCol = collection(db, "monete");
+
+    const form = document.getElementById("coinForm");
+    const preview = document.getElementById("preview");
+    const coinList = document.getElementById("coinList");
+    const filterCategory = document.getElementById("filterCategory");
+    const search = document.getElementById("search");
+    const totalValue = document.getElementById("totalValue");
+    const modal = document.getElementById("coinModal");
+    const closeModal = document.getElementById("closeModal");
+    const editBtn = document.getElementById("editBtn");
+    const editForm = document.getElementById("editForm");
+    const deleteBtn = document.getElementById("deleteBtn");
+    let currentCoinId = null;
+    let coinsCache = [];
+
+    // === Anteprima foto ===
+    form.photo.addEventListener("change", () => {
+      const file = form.photo.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+          preview.src = e.target.result;
+          preview.classList.remove("hidden");
+        };
+        reader.readAsDataURL(file);
+      } else {
+        preview.classList.add("hidden");
+      }
+    });
+
+    // === Salvataggio con compressione Base64 ===
+    form.addEventListener("submit", async e => {
+      e.preventDefault();
+      const name = form.name.value.trim();
+      const value = parseFloat(form.value.value);
+      const quantity = parseInt(form.quantity.value) || 1;
+      const country = form.country.value.trim();
+      const category = form.category.value.trim();
+      const photo = form.photo.files[0];
+      const submitBtn = form.querySelector("button[type='submit']");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "⏳ Salvataggio...";
+
+      try {
+        let photoURL = "";
+        if (photo) photoURL = await compressAndConvertToBase64(photo);
+        await addDoc(coinsCol, { name, value, quantity, country, category, photoURL });
+        form.reset();
+        preview.classList.add("hidden");
+        alert("✅ Moneta aggiunta con successo!");
+      } catch (err) {
+        console.error(err);
+        alert("❌ Errore durante il salvataggio: " + err.message);
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Salva Moneta";
+      }
+    });
+
+    // === Funzione di compressione ===
+    async function compressAndConvertToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        const reader = new FileReader();
+        reader.onload = e => (img.src = e.target.result);
+        img.onload = () => {
+          const maxDim = 800;
+          let { width, height } = img;
+          if (width > height && width > maxDim) {
+            height *= maxDim / width;
+            width = maxDim;
+          } else if (height > maxDim) {
+            width *= maxDim / height;
+            height = maxDim;
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", 0.7));
+        };
+        reader.onerror = err => reject(err);
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // === Render lista monete ===
+    onSnapshot(coinsCol, snap => {
+      coinsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderCoins(coinsCache);
+    });
+
+    function renderCoins(coins) {
+      const searchTerm = search.value.toLowerCase();
+      const selectedCat = filterCategory.value.toLowerCase();
+      const normalized = coins.map(c => ({
+        ...c,
+        category: c.category ? c.category.trim().toLowerCase() : "",
+        country: c.country ? c.country.trim().toLowerCase() : ""
+      }));
+      const categories = [...new Set(normalized.map(c => c.category).filter(Boolean))].sort();
+      const countries = [...new Set(normalized.map(c => c.country).filter(Boolean))].sort();
+      filterCategory.innerHTML =
+        '<option value="">Tutte le categorie</option>' +
+        categories.map(c => `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`).join("");
+      document.getElementById("countryList").innerHTML = countries.map(c => `<option value="${c}">`).join("");
+      document.getElementById("categoryList").innerHTML = categories.map(c => `<option value="${c}">`).join("");
+      document.getElementById("editCountryList").innerHTML = countries.map(c => `<option value="${c}">`).join("");
+      document.getElementById("editCategoryList").innerHTML = categories.map(c => `<option value="${c}">`).join("");
+      const filtered = normalized.filter(c =>
+        (!selectedCat || c.category === selectedCat) && c.name.toLowerCase().includes(searchTerm)
+      );
+      const total = filtered.reduce((sum, c) => sum + ((parseFloat(c.value) || 0) * (parseInt(c.quantity) || 1)), 0);
+      totalValue.textContent = `Valore Totale: €${total.toFixed(2)}`;
+      coinList.innerHTML = filtered.map(c => `
+        <div class="bg-white rounded-xl shadow hover:shadow-lg transition p-4 cursor-pointer" data-id="${c.id}">
+          <img src="${c.photoURL || 'https://via.placeholder.com/200'}" class="rounded mb-2 w-full h-40 object-cover">
+          <h3 class="font-bold text-lg">${c.name}</h3>
+          <p class="text-sm text-gray-600">${c.country}</p>
+          <p class="text-sm"><strong>Valore:</strong> €${c.value}</p>
+          <p class="text-sm"><strong>Quantità:</strong> ${c.quantity || 1}</p>
+          <p class="text-sm"><strong>Categoria:</strong> ${c.category}</p>
+        </div>
+      `).join("");
+      document.querySelectorAll("[data-id]").forEach(el => {
+        el.addEventListener("click", () => openModal(coins.find(c => c.id === el.dataset.id)));
+      });
+    }
+
+    // === Modale ===
+    function openModal(coin) {
+      currentCoinId = coin.id;
+      document.getElementById("modalImage").src = coin.photoURL || "https://via.placeholder.com/200";
+      document.getElementById("modalName").textContent = coin.name;
+      document.getElementById("modalValue").textContent = coin.value;
+      document.getElementById("modalQuantity").textContent = coin.quantity || 1;
+      document.getElementById("modalCountry").textContent = coin.country;
+      document.getElementById("modalCategory").textContent = coin.category;
+      editForm.editName.value = coin.name;
+      editForm.editValue.value = coin.value;
+      editForm.editQuantity.value = coin.quantity || 1;
+      editForm.editCountry.value = coin.country;
+      editForm.editCategory.value = coin.category;
+      editForm.editPhoto.value = "";
+      editForm.classList.add("hidden");
+      editBtn.classList.remove("hidden");
+      modal.classList.remove("hidden");
+    }
+
+    editBtn.addEventListener("click", () => editForm.classList.toggle("hidden"));
+    closeModal.addEventListener("click", () => modal.classList.add("hidden"));
+    modal.addEventListener("click", e => { if (e.target === modal) modal.classList.add("hidden"); });
+
+    // === Modifica ===
+    editForm.addEventListener("submit", async e => {
+      e.preventDefault();
+      if (!currentCoinId) return;
+      const name = editForm.editName.value.trim();
+      const value = parseFloat(editForm.editValue.value);
+      const quantity = parseInt(editForm.editQuantity.value) || 1;
+      const country = editForm.editCountry.value.trim();
+      const category = editForm.editCategory.value.trim();
+      const photo = editForm.editPhoto.files[0];
+      let photoURL = document.getElementById("modalImage").src;
+      try {
+        if (photo) photoURL = await compressAndConvertToBase64(photo);
+        await updateDoc(doc(db, "monete", currentCoinId), { name, value, quantity, country, category, photoURL });
+        alert("✅ Moneta aggiornata!");
+        modal.classList.add("hidden");
+      } catch (err) {
+        alert("❌ Errore durante l'aggiornamento: " + err.message);
+      }
+    });
+
+    // === Elimina ===
+    deleteBtn.addEventListener("click", async () => {
+      if (!currentCoinId) return;
+      if (!confirm("Vuoi eliminare questa moneta?")) return;
+      await deleteDoc(doc(db, "monete", currentCoinId));
+      modal.classList.add("hidden");
+    });
+  </script>
+</body>
+</html>
