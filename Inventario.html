@@ -26,7 +26,7 @@
 
         <!-- Categoria con suggerimenti -->
         <div>
-          <input list="categoryList" id="category" placeholder="Categoria (es. Antiche, Euro, Ricordo...)" required class="border p-2 rounded w-full" />
+          <input list="categoryList" id="category" placeholder="Categoria (es. Francobolli, Monete...)" required class="border p-2 rounded w-full" />
           <datalist id="categoryList"></datalist>
         </div>
 
@@ -48,8 +48,10 @@
       <p id="totalValue" class="font-semibold text-gray-700">Valore Totale: €0</p>
     </div>
 
-    <!-- Sezione Elenco -->
-    <div id="coinList" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+   <!-- Sezione Elenco -->
+
+<div id="coinList" class="grid sm:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+
 
     <!-- Modal Dettaglio / Modifica -->
     <div id="coinModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-auto">
@@ -117,6 +119,7 @@
     const editBtn = document.getElementById("editBtn");
     const editForm = document.getElementById("editForm");
     const deleteBtn = document.getElementById("deleteBtn");
+	 
     let currentCoinId = null;
     let coinsCache = [];
 
@@ -197,43 +200,105 @@
       coinsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       renderCoins(coinsCache);
     });
+// Aggiorna l'elenco quando si cerca o si cambia categoria
+search.addEventListener('input', () => renderCoins(coinsCache));
+filterCategory.addEventListener('change', () => renderCoins(coinsCache));
 
-    function renderCoins(coins) {
-      const searchTerm = search.value.toLowerCase();
-      const selectedCat = filterCategory.value.toLowerCase();
-      const normalized = coins.map(c => ({
-        ...c,
-        category: c.category ? c.category.trim().toLowerCase() : "",
-        country: c.country ? c.country.trim().toLowerCase() : ""
-      }));
-      const categories = [...new Set(normalized.map(c => c.category).filter(Boolean))].sort();
-      const countries = [...new Set(normalized.map(c => c.country).filter(Boolean))].sort();
-      filterCategory.innerHTML =
-        '<option value="">Tutte le categorie</option>' +
-        categories.map(c => `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`).join("");
-      document.getElementById("countryList").innerHTML = countries.map(c => `<option value="${c}">`).join("");
-      document.getElementById("categoryList").innerHTML = categories.map(c => `<option value="${c}">`).join("");
-      document.getElementById("editCountryList").innerHTML = countries.map(c => `<option value="${c}">`).join("");
-      document.getElementById("editCategoryList").innerHTML = categories.map(c => `<option value="${c}">`).join("");
-      const filtered = normalized.filter(c =>
-        (!selectedCat || c.category === selectedCat) && c.name.toLowerCase().includes(searchTerm)
-      );
-      const total = filtered.reduce((sum, c) => sum + ((parseFloat(c.value) || 0) * (parseInt(c.quantity) || 1)), 0);
-      totalValue.textContent = `Valore Totale: €${total.toFixed(2)}`;
-      coinList.innerHTML = filtered.map(c => `
-        <div class="bg-white rounded-xl shadow hover:shadow-lg transition p-4 cursor-pointer" data-id="${c.id}">
-          <img src="${c.photoURL || 'https://via.placeholder.com/200'}" class="rounded mb-2 w-full h-40 object-cover">
-          <h3 class="font-bold text-lg">${c.name}</h3>
-          <p class="text-sm text-gray-600">${c.country}</p>
-          <p class="text-sm"><strong>Valore:</strong> €${c.value}</p>
-          <p class="text-sm"><strong>Quantità:</strong> ${c.quantity || 1}</p>
-          <p class="text-sm"><strong>Categoria:</strong> ${c.category}</p>
-        </div>
-      `).join("");
-      document.querySelectorAll("[data-id]").forEach(el => {
-        el.addEventListener("click", () => openModal(coins.find(c => c.id === el.dataset.id)));
-      });
-    }
+   function renderCoins(coins) {
+  // input normalizzati
+  const searchTerm = (search.value || "").trim().toLowerCase();
+  const selectedCatRaw = (filterCategory.value || "").trim().toLowerCase();
+
+  // normalizza i campi dei record
+  const normalized = coins.map(c => ({
+    ...c,
+    _categoryLc: (c.category || "").trim().toLowerCase(),
+    _countryLc: (c.country || "").trim().toLowerCase(),
+    _nameLc: (c.name || "").toLowerCase()
+  }));
+
+  // categorie/pesi unici (lowercase) poi mostrate con prima lettera maiuscola
+  const categories = [...new Set(normalized.map(c => c._categoryLc).filter(Boolean))].sort();
+  const countries  = [...new Set(normalized.map(c => c._countryLc).filter(Boolean))].sort();
+
+  // 🔒 salva selezione corrente PRIMA di riscrivere le <option>
+  const keepValue = selectedCatRaw;
+
+  // ripopola select categorie
+  filterCategory.innerHTML =
+    '<option value="">Tutte le categorie</option>' +
+    categories.map(c => `<option value="${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</option>`).join('');
+
+  // ripristina selezione
+  filterCategory.value = keepValue;
+
+  // ripopola datalist (ok senza </option>)
+  document.getElementById('countryList').innerHTML      = countries.map(c => `<option value="${c.charAt(0).toUpperCase()+c.slice(1)}">`).join('');
+  document.getElementById('categoryList').innerHTML     = categories.map(c => `<option value="${c.charAt(0).toUpperCase()+c.slice(1)}">`).join('');
+  document.getElementById('editCountryList').innerHTML  = countries.map(c => `<option value="${c.charAt(0).toUpperCase()+c.slice(1)}">`).join('');
+  document.getElementById('editCategoryList').innerHTML = categories.map(c => `<option value="${c.charAt(0).toUpperCase()+c.slice(1)}">`).join('');
+
+  // ✅ filtro robusto e case-insensitive
+  const filtered = normalized.filter(c =>
+    (!keepValue || c._categoryLc === keepValue) &&
+    c._nameLc.includes(searchTerm)
+  );
+
+  // totale (valore × quantità)
+  const total = filtered.reduce((sum, c) => sum + ((parseFloat(c.value) || 0) * (parseInt(c.quantity) || 1)), 0);
+  totalValue.textContent = `Valore Totale: €${total.toFixed(2)}`;
+
+  // render
+  if (filtered.length === 0) {
+    coinList.innerHTML = `
+      <div class="col-span-full text-center text-gray-500 py-8">
+        Nessuna moneta trovata con i filtri correnti.
+      </div>`;
+  } else {
+   coinList.innerHTML = filtered.map(c => `
+  <div class="bg-white rounded-xl shadow hover:shadow-lg transition p-4 relative" data-id="${c.id}">
+    <div class="flex justify-between items-start">
+      <h3 class="font-bold text-lg">${c.name}</h3>
+      <button class="toggle-photo bg-gray-200 hover:bg-gray-300 text-xs px-2 py-1 rounded" data-photo-id="${c.id}">
+        📸
+      </button>
+    </div>
+    <p class="text-sm text-gray-600">${c.country.charAt(0).toUpperCase() + c.country.slice(1)}</p>
+    <p class="text-sm"><strong>Valore:</strong> €${c.value}</p>
+    <p class="text-sm"><strong>Quantità:</strong> ${c.quantity || 1}</p>
+    <p class="text-sm"><strong>Categoria:</strong> ${c.category.charAt(0).toUpperCase() + c.category.slice(1)}</p>
+    <img src="${c.photoURL || 'https://via.placeholder.com/200'}"
+         class="rounded mt-2 w-full h-40 object-cover hidden transition-all duration-300"
+         id="photo-${c.id}">
+  </div>
+`).join('');
+  }
+// Gestione pulsanti mostra/nascondi foto
+document.querySelectorAll('.toggle-photo').forEach(btn => {
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation(); // evita di aprire il popup
+    const id = btn.getAttribute('data-photo-id');
+    const img = document.getElementById(`photo-${id}`);
+
+    if (!img) return;
+
+    const isHidden = img.classList.contains('hidden');
+    img.classList.toggle('hidden', !isHidden);
+    btn.textContent = isHidden ? '🚫' : '📸';
+  });
+});
+
+	   
+  // click per dettaglio (usa l’array originale 'coins' per non perdere mai i dati)
+  document.querySelectorAll('[data-id]').forEach(el => {
+    el.addEventListener('click', () => {
+      const coin = coins.find(cc => cc.id === el.dataset.id);
+      if (coin) openModal(coin);
+    });
+  });
+}
+
+
 
     // === Modale ===
     function openModal(coin) {
